@@ -8,7 +8,7 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    container: swift:6.1
+    container: swift:6.1-noble
     steps:
       - uses: actions/checkout@v4
       - run: swift build
@@ -18,5 +18,16 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: swift build
       - run: swift test
+      - name: Build for iOS
+        run: xcodebuild build -scheme AudienceKit-Package -destination 'generic/platform=iOS Simulator'
+
+  version:
+    # Each change to the SDK needs a new version: apps send it, and the API refuses ones below its minimum.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/check-version.sh origin/${{ github.base_ref }}
