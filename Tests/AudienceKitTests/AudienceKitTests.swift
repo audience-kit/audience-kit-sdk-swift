@@ -174,12 +174,15 @@ private func makeClient(
     {"data":{"venues":[{
       "id":"Z2lkOi8vaG90LW1lc3MvVmVudWUvMTIz","name":null,"hidden":false,"order":3,
       "photoUrl":"/v1/photos/abc","bannerUrl":null,
-      "page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","bannerUrl":null},
-      "locale":{"id":"l-1","name":"San Francisco","label":"SF","cityNames":null,"bannerUrl":null},
+      "profile":{"facebook":{"page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","bannerUrl":null}}},
+      "locale":{"id":"l-1","name":"San Francisco","label":"SF","cityNames":null,"bannerUrl":null,
+        "profile":{"places":{"placeId":"ChIJIQBpAG2ahYAR_6128GcTUEo"}}},
       "location":{"id":"loc-1","point":"POINT (-122.4194 37.7749)"}
     },{
-      "id":"v-2","name":"Pony","hidden":false,"order":4,"photoUrl":null,"bannerUrl":null,"page":null,
-      "locale":{"id":"l-2","name":"Seattle","label":"SEA","cityNames":["Seattle","Capitol Hill"],"bannerUrl":null},
+      "id":"v-2","name":"Pony","hidden":false,"order":4,"photoUrl":null,"bannerUrl":null,
+      "profile":{"facebook":{"page":null}},
+      "locale":{"id":"l-2","name":"Seattle","label":"SEA","cityNames":["Seattle","Capitol Hill"],"bannerUrl":null,
+        "profile":{"places":{"placeId":null}}},
       "location":null,"tags":[{"id":"t-1","name":"Leather","color":"#222222"}]
     }]}}
     """#
@@ -204,6 +207,7 @@ private func makeClient(
         #expect(venue.name == "The Stud")
         #expect(venue.order == 3)
         #expect(venue.locale.label == "SF")
+        #expect(venue.locale.googlePlaceId == "ChIJIQBpAG2ahYAR_6128GcTUEo")
         #expect(venue.location?.coordinate == Coordinate(latitude: 37.7749, longitude: -122.4194))
         #expect(client.url(for: venue.photoUrl) == stub.baseURL.appendingPathComponent("v1/photos/abc"))
         #expect(client.url(for: venue.page?.photoUrl) == URL(string: "https://cdn.example/stud.jpg"))
@@ -213,6 +217,11 @@ private func makeClient(
         #expect(pageless.page == nil)
         #expect(pageless.name == "Pony")
         #expect(pageless.locale.cityNames == ["Seattle", "Capitol Hill"])
+        #expect(pageless.locale.googlePlaceId == nil)
+
+        // Encoding writes the profile facet back, so a venue round-trips.
+        #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(venue)) == venue)
+        #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(pageless)) == pageless)
 
         #expect(venue.tags == nil)
         #expect(pageless.tags?.map(\.name) == ["Leather"])
@@ -237,9 +246,10 @@ private func makeClient(
             case "People":
                 return .json(status: 200, body: #"""
                 {"data":{"people":[{"id":"pe-1","order":1,"global":false,"likeRequired":true,
-                  "page":{"id":"p-2","name":"DJ Example","photoUrl":null,"bannerUrl":null},
+                  "profile":{"facebook":{"page":{"id":"p-2","name":"DJ Example","photoUrl":null,"bannerUrl":null}}},
                   "locales":[{"id":"l-2","name":"Portland"}]},
-                  {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,"page":null,
+                  {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,
+                  "profile":{"facebook":{"page":null}},
                   "venues":{"home":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
                     "friends":[{"id":"f-1","name":"Sam Okafor","facebookId":"123","presence":"ONLINE"}]}},
                   "events":{"involvements":{"edges":[
@@ -270,6 +280,7 @@ private func makeClient(
         // Talent added by name has no Facebook Page yet.
         #expect(people.map(\.name) == ["DJ Example", "DJ Nobody"])
         #expect(people.last?.page == nil)
+        #expect(people.first?.page?.id == "p-2")
         #expect(people.first?.likeRequired == true)
         // Featured locales, home venue and gigs place a person in a locale, with friends there now.
         #expect(people.first?.homeVenue == nil)
