@@ -62,12 +62,14 @@ public enum Queries {
     }
     """
 
-    /// Records the user's position and returns what's happening there. Select the `Now` fields the app
-    /// needs and decode the result yourself; `$position` is a ``Coordinates/graphQLValue``.
-    public static func reportLocation(selecting nowFields: String) -> String {
+    /// Records the user's position and says where that is: `venue` when they're in one, else `locale` and
+    /// its `nearbyVenues`, plus `audience` for its facets. Select the fields the app needs (with the facets it
+    /// reads, such as `venue { friends { list { name } } }`) and decode the result yourself; `$position` is a
+    /// ``Coordinates/graphQLValue``.
+    public static func reportLocation(selecting fields: String) -> String {
         """
         mutation ReportLocation($position: CoordinatesInput!) {
-          reportLocation(input: { position: $position }) { now { \(nowFields) } }
+          reportLocation(input: { position: $position }) { \(fields) }
         }
         """
     }
