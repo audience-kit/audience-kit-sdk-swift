@@ -603,7 +603,7 @@ private func makeClient(
             if operation == "DoorVenues" {
                 return .json(status: 200, body: #"""
                 {"data":{"cover":{"doorVenues":{"nodes":[{"id":"v-1","name":"The Stud","photoUrl":null,
-                  "cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}]}}}}
+                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}}]}}}}
                 """#)
             }
             return .json(status: 200, body: #"""
@@ -628,14 +628,14 @@ private func makeClient(
         let stub = Stub { request in
             let id = (try? request.jsonBody()["variables"] as? [String: String])?["id"]
             if id == "v-2" {
-                // A venue that takes no cover has no cover facet.
-                return .json(status: 200, body: #"{"data":{"venues":{"venue":{"id":"v-2","name":"Free Bar","cover":null}}}}"#)
+                // A venue that takes no cover tonight has no charge.
+                return .json(status: 200, body: #"{"data":{"venues":{"venue":{"id":"v-2","name":"Free Bar","tickets":{"cover":{"charge":null,"viewerAdmission":null}}}}}}"#)
             }
             return .json(status: 200, body: #"""
-            {"data":{"venues":{"venue":{"id":"v-1","name":"The Stud","cover":{
+            {"data":{"venues":{"venue":{"id":"v-1","name":"The Stud","tickets":{"cover":{
               "charge":{"amountCents":1000,"totalCents":1112,"feeCents":112,"currency":"usd","night":"2026-10-09",
                 "from":"21:00","payable":true,"event":null},
-              "viewerAdmission":\#(Self.admission)}}}}}
+              "viewerAdmission":\#(Self.admission)}}}}}}
             """#)
         }
         let (client, _) = makeClient(stub)
