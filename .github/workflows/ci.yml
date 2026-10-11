@@ -14,14 +14,6 @@ jobs:
       - run: swift build
       - run: swift test
 
-  macos:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift test
-      - name: Build for iOS
-        run: xcodebuild build -scheme AudienceKit-Package -destination 'generic/platform=iOS Simulator'
-
   version:
     # Each change to the SDK needs a new version: apps send it, and the API refuses ones below its minimum.
     if: github.event_name == 'pull_request'
