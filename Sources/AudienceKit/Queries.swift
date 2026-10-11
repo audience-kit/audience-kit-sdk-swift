@@ -135,9 +135,11 @@ public enum Queries {
       venues {
         venue(id: $id) {
           id name
-          cover {
-            charge { \(coverChargeFields) }
-            viewerAdmission { \(admissionFields) }
+          tickets {
+            cover {
+              charge { \(coverChargeFields) }
+              viewerAdmission { \(admissionFields) }
+            }
           }
         }
       }
@@ -152,13 +154,13 @@ public enum Queries {
 
     public static let doorVenues = """
     query DoorVenues {
-      cover { doorVenues { nodes { id name photoUrl cover { door { \(doorNightFields) } } } } }
+      cover { doorVenues { nodes { id name photoUrl tickets { cover { door { \(doorNightFields) } } } } } }
     }
     """
 
     public static let venueDoor = """
     query VenueDoor($id: ID!, $night: ISO8601Date) {
-      venues { venue(id: $id) { id name photoUrl cover { door(night: $night) { \(doorNightFields) } } } }
+      venues { venue(id: $id) { id name photoUrl tickets { cover { door(night: $night) { \(doorNightFields) } } } } }
     }
     """
 

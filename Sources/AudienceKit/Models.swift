@@ -638,18 +638,23 @@ public struct CoverPurchase: Codable, Sendable, Hashable {
 public struct VenueCover: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
-    /// The API's `cover` facet; nil when the venue takes no cover.
-    private var cover: Facet?
+    /// The API's `tickets` facet, read for the `cover` facet inside it; nil where the audience has neither module.
+    private var tickets: Tickets?
 
     /// Tonight's cover, or `nil` when there is none.
     public var coverCharge: CoverCharge? {
-        get { cover?.charge }
-        set { cover = Facet(charge: newValue, viewerAdmission: cover?.viewerAdmission) }
+        get { tickets?.cover?.charge }
+        set { tickets = Tickets(cover: Facet(charge: newValue, viewerAdmission: viewerAdmission)) }
     }
     /// The signed-in user's cover for tonight, paid or being paid.
     public var viewerAdmission: Admission? {
-        get { cover?.viewerAdmission }
-        set { cover = Facet(charge: cover?.charge, viewerAdmission: newValue) }
+        get { tickets?.cover?.viewerAdmission }
+        set { tickets = Tickets(cover: Facet(charge: coverCharge, viewerAdmission: newValue)) }
+    }
+
+    /// `tickets { cover }`.
+    private struct Tickets: Codable, Sendable, Hashable {
+        var cover: Facet?
     }
 
     /// `cover { charge viewerAdmission }`.
@@ -676,13 +681,18 @@ public struct DoorVenue: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
     public var photoUrl: String?
-    /// The API's `cover` facet; nil when the venue takes no cover.
-    private var cover: Facet?
+    /// The API's `tickets` facet, read for the `cover` facet inside it.
+    private var tickets: Tickets?
 
     /// The night's door, or `nil` unless the signed-in user can work it.
     public var door: DoorNight? {
-        get { cover?.door }
-        set { cover = Facet(door: newValue) }
+        get { tickets?.cover?.door }
+        set { tickets = Tickets(cover: Facet(door: newValue)) }
+    }
+
+    /// `tickets { cover }`.
+    private struct Tickets: Codable, Sendable, Hashable {
+        var cover: Facet?
     }
 
     /// `cover { door }`.
