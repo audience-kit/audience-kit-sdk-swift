@@ -120,11 +120,14 @@ Run any other operation and decode it into your own type:
 ```swift
 struct VenueNames: Decodable, Sendable {
     struct Venue: Decodable, Sendable { let id: String; let name: String? }
-    let venues: [Venue]
+    struct List: Decodable, Sendable { let nodes: [Venue] }
+    struct Venues: Decodable, Sendable { let list: List }
+    struct Audience: Decodable, Sendable { let venues: Venues }
+    let audience: Audience
 }
 
 let names = try await client.graphQL(
-    "query VenueNames { venues { id name } }",
+    "query VenueNames { audience { venues { list { nodes { id name } } } } }",
     operationName: "VenueNames",
     as: VenueNames.self
 )
@@ -178,8 +181,9 @@ let now = try await client.graphQL(document, variables: ["position": here.graphQ
                                    as: MyNowResponse.self, decoder: myDecoder)
 ```
 
-The API also serves `venue(id:)`, `event(id:)`, `person(id:)` and `locale(id:)`
-by UUID, `venues(near:)` nearest first with each `distance`, and each
+The API also serves `venues { venue(id:) }`, `events { event(id:) }`,
+`people { person(id:) }` and `locale(id:)` by UUID,
+`audience { venues { list(near:) } }` nearest first with each `distance`, and each
 locale's and venue's upcoming events
 (`events { upcoming { nodes { … } } }`: facets, whose lists are Relay connections).
 
