@@ -90,9 +90,12 @@ extension AudienceSession {
         try await graphQL(Queries.admissions, operationName: "Admissions", as: AdmissionsResponse.self).admissions
     }
 
-    /// The venues whose door the signed-in user can work, with tonight's counts. Empty for most people.
+    /// The venues whose door the signed-in user can work, with tonight's counts. Empty for most people. Working a
+    /// door is staff work, so this and ``door(venueID:night:)`` and ``scanAdmission(venueID:code:)`` go to the
+    /// audience's staff endpoint (``GraphQLEndpoint/staff``), which turns away anyone who isn't staff.
     public func doorVenues() async throws -> [DoorVenue] {
-        try await graphQL(Queries.doorVenues, operationName: "DoorVenues", as: DoorVenuesResponse.self).doorVenues
+        try await graphQL(Queries.doorVenues, operationName: "DoorVenues", endpoint: .staff,
+                          as: DoorVenuesResponse.self).doorVenues
     }
 
     /// A venue's door for a night (`yyyy-MM-dd`, tonight by default). `door` is `nil` unless the signed-in user
@@ -101,7 +104,7 @@ extension AudienceSession {
         var variables: [String: GraphQLValue] = ["id": .string(venueID)]
         if let night { variables["night"] = .string(night) }
         return try await graphQL(Queries.venueDoor, variables: variables, operationName: "VenueDoor",
-                                 as: VenueDoorResponse.self).venue
+                                 endpoint: .staff, as: VenueDoorResponse.self).venue
     }
 
     /// Starts paying tonight's cover at a venue. For a Stripe venue, present Stripe's payment sheet with the
@@ -141,7 +144,8 @@ extension AudienceSession {
     /// night are re-entry.
     public func scanAdmission(venueID: String, code: String) async throws -> ScanResult {
         try await graphQL(Queries.scanAdmission, variables: ["venueId": .string(venueID), "code": .string(code)],
-                          operationName: "ScanAdmission", as: ScanAdmissionResponse.self).scanAdmission.result
+                          operationName: "ScanAdmission", endpoint: .staff,
+                          as: ScanAdmissionResponse.self).scanAdmission.result
     }
 
 }

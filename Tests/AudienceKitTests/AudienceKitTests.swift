@@ -229,6 +229,18 @@ private func makeClient(
         #expect(pageless.tags?.first?.color == "#222222")
     }
 
+    @Test func staffToolsUseTheStaffEndpoint() async throws {
+        struct Me: Decodable, Sendable { let me: Person? ; struct Person: Decodable, Sendable { let id: String } }
+        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"me":{"id":"u-1"}}}"#) }
+        let (client, _) = makeClient(stub)
+
+        _ = try await client.graphQL("{ me { id } }", endpoint: .staff, as: Me.self)
+        _ = try await client.graphQL("{ me { id } }", as: Me.self)
+
+        #expect(stub.requests.map(\.path) == ["/v1/audience/\(audienceID)/staffql", "/v1/audience/\(audienceID)/graphql"])
+        #expect(GraphQLEndpoint.allCases.map { $0.path(audienceID: "a") } == ["/v1/audience/a/graphql", "/v1/audience/a/staffql"])
+    }
+
     @Test func sendsVariables() async throws {
         let stub = Stub { _ in .json(status: 200, body: #"{"data":{"node":{"__typename":"Venue","id":"v-1"}}}"#) }
         let (client, _) = makeClient(stub)
@@ -622,6 +634,8 @@ private func makeClient(
         #expect(result.message.hasPrefix("Re-entry"))
         #expect(try #require(stub.requests.last).jsonBody()["variables"] as? [String: String]
             == ["venueId": "v-1", "code": "HMC1.a.1.b"])
+        // Working the door is staff work: both go to the audience's staff endpoint.
+        #expect(stub.requests.map(\.path) == ["/v1/audience/\(audienceID)/staffql", "/v1/audience/\(audienceID)/staffql"])
     }
 
     @Test func decodesAVenuesCoverFacet() async throws {

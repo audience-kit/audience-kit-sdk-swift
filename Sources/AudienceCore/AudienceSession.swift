@@ -232,11 +232,13 @@ public actor AudienceSession {
     /// Runs a GraphQL operation against the audience's endpoint and decodes its `data`.
     ///
     /// Throws ``AudienceKitError/graphQL(_:)`` when the response carries errors, even alongside data.
-    /// Pass a `decoder` to decode into the app's own models, e.g. with its date strategy.
+    /// Pass a `decoder` to decode into the app's own models, e.g. with its date strategy. `endpoint` is the
+    /// consumer view the apps use unless staff tools ask for ``GraphQLEndpoint/staff``.
     public func graphQL<Response: Decodable & Sendable>(
         _ query: String,
         variables: [String: GraphQLValue]? = nil,
         operationName: String? = nil,
+        endpoint: GraphQLEndpoint = .consumer,
         as type: Response.Type = Response.self,
         decoder: JSONDecoder = JSONDecoder()
     ) async throws -> Response {
@@ -244,7 +246,7 @@ public actor AudienceSession {
         let body = try JSONEncoder().encode(
             GraphQLRequest(query: query, variables: variables, operationName: operationName)
         )
-        let request = APIRequest(method: "POST", path: "/v1/audience/\(audienceID)/graphql", body: body)
+        let request = APIRequest(method: "POST", path: endpoint.path(audienceID: audienceID), body: body)
 
         let data = try await data(for: request)
         let envelope = try Self.decode(GraphQLResponse<Response>.self, from: data, decoder: decoder)
