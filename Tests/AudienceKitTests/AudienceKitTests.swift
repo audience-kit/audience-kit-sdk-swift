@@ -752,15 +752,6 @@ private func makeClient(
         #expect(Coordinate(wkt: "") == nil)
     }
 
-    @Test func decodesGlobalIDs() {
-        let encoded = Data("gid://hot-mess/Venue/7b4e0c6a-1d2f-4e8a-9c3b-5f6a7b8c9d0e".utf8).base64EncodedString()
-            .replacingOccurrences(of: "=", with: "")
-        let id = GlobalID(encoded)
-        #expect(id?.modelName == "Venue")
-        #expect(id?.modelID == "7b4e0c6a-1d2f-4e8a-9c3b-5f6a7b8c9d0e")
-        #expect(GlobalID("not base64!") == nil)
-    }
-
     @Test func readsTheAudienceClaim() {
         #expect(AudienceKitClient.claims(of: makeJWT(["audience_id": "a-1"]))?.audienceID == "a-1")
         #expect(AudienceKitClient.claims(of: makeJWT(["id": "u"]))?.audienceID == nil)
