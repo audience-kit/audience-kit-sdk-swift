@@ -90,13 +90,43 @@ public struct Location: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     /// The point as the API serializes it (WKT, e.g. `POINT (-122.42 37.77)`).
     public var point: String?
-    /// Its Google place ID, when an admin or the researcher has set one.
+    /// Its Google place ID, when an admin or the researcher has set one: the API's `places { placeId }`.
     public var googlePlaceId: String?
     /// Its full address, when known.
     public var address: String?
 
     /// ``point`` parsed into latitude and longitude, when it is a WKT point.
     public var coordinate: Coordinate? { point.flatMap(Coordinate.init(wkt:)) }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, point, address, places
+    }
+
+    public init(id: String, point: String? = nil, googlePlaceId: String? = nil, address: String? = nil) {
+        self.id = id
+        self.point = point
+        self.googlePlaceId = googlePlaceId
+        self.address = address
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        point = try container.decodeIfPresent(String.self, forKey: .point)
+        address = try container.decodeIfPresent(String.self, forKey: .address)
+        googlePlaceId = try container.decodeIfPresent(ListingProfile.Places.self, forKey: .places)?.placeId
+    }
+
+    /// Writes the API's shape, so an encoded location decodes back the same.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(point, forKey: .point)
+        try container.encodeIfPresent(address, forKey: .address)
+        if let googlePlaceId {
+            try container.encode(ListingProfile.Places(placeId: googlePlaceId), forKey: .places)
+        }
+    }
 }
 
 /// A venue in the audience.

@@ -177,7 +177,7 @@ private func makeClient(
       "profile":{"facebook":{"page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","bannerUrl":null}}},
       "locale":{"id":"l-1","name":"San Francisco","label":"SF","cityNames":null,"bannerUrl":null,
         "profile":{"places":{"placeId":"ChIJIQBpAG2ahYAR_6128GcTUEo"}}},
-      "location":{"id":"loc-1","point":"POINT (-122.4194 37.7749)"}
+      "location":{"id":"loc-1","point":"POINT (-122.4194 37.7749)","places":{"placeId":"ChIJ-stud"}}
     },{
       "id":"v-2","name":"Pony","hidden":false,"order":4,"photoUrl":null,"bannerUrl":null,
       "profile":{"facebook":{"page":null}},
@@ -209,6 +209,7 @@ private func makeClient(
         #expect(venue.locale.label == "SF")
         #expect(venue.locale.googlePlaceId == "ChIJIQBpAG2ahYAR_6128GcTUEo")
         #expect(venue.location?.coordinate == Coordinate(latitude: 37.7749, longitude: -122.4194))
+        #expect(venue.location?.googlePlaceId == "ChIJ-stud")
         #expect(client.url(for: venue.photoUrl) == stub.baseURL.appendingPathComponent("v1/photos/abc"))
         #expect(client.url(for: venue.page?.photoUrl) == URL(string: "https://cdn.example/stud.jpg"))
 
