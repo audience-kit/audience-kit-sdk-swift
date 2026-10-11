@@ -23,7 +23,7 @@ public enum DesignTokens {
         public let hoverOverlay: RGBAColor
         /// `press-overlay`: Translucent layer for the pressed state.
         public let pressOverlay: RGBAColor
-        /// `border`: Hairline dividers and card outlines. Decorative only; never the sole edge of a control.
+        /// `border`: Hairline dividers and card outlines, and the resting-card edge in dark themes. Decorative only; never the sole edge of a control. Distinct from `control-fill`.
         public let border: RGBAColor
         /// `border-strong`: Text field and checkbox outlines; at least 3:1 on `surface` and `surface-raised` in every theme.
         public let borderStrong: RGBAColor
@@ -172,7 +172,7 @@ public enum DesignTokens {
         controlFillHover: RGBAColor(rgba: 0x4A4B4EFF),
         hoverOverlay: RGBAColor(rgba: 0xFFFFFF1A),
         pressOverlay: RGBAColor(rgba: 0xFFFFFF2E),
-        border: RGBAColor(rgba: 0x3A3B3EFF),
+        border: RGBAColor(rgba: 0x46484CFF),
         borderStrong: RGBAColor(rgba: 0x7B7E83FF),
         ink: RGBAColor(rgba: 0xE4E6EBFF),
         inkMuted: RGBAColor(rgba: 0xB0B3B8FF),
@@ -274,7 +274,7 @@ public enum DesignTokens {
         controlFillHover: RGBAColor(rgba: 0x4B3F47FF),
         hoverOverlay: RGBAColor(rgba: 0xFFFFFF1A),
         pressOverlay: RGBAColor(rgba: 0xFFFFFF2E),
-        border: RGBAColor(rgba: 0x3E333BFF),
+        border: RGBAColor(rgba: 0x4A3D46FF),
         borderStrong: RGBAColor(rgba: 0x8A7A85FF),
         ink: RGBAColor(rgba: 0xF3E6EEFF),
         inkMuted: RGBAColor(rgba: 0xC2ADBAFF),

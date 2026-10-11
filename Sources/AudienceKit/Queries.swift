@@ -11,6 +11,8 @@ public enum Queries {
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
     /// friends are there now.
     public static let personVenueFields = "id name photoUrl locale { id name } friends { id name facebookId presence }"
+    /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`.
+    public static let personEventFields = "id name startAt locale { id name } venue { \(personVenueFields) } tags { \(tagFields) }"
 
     public static let audience = """
     query Audience {
@@ -36,7 +38,7 @@ public enum Queries {
         id name order global likeRequired page { \(pageFields) }
         homeVenue { \(personVenueFields) }
         locales { id name }
-        events { id name startAt locale { id name } venue { \(personVenueFields) } tags { \(tagFields) } }
+        eventInvolvements { edges { relationship role via { id name } node { \(personEventFields) } } }
         tags { \(tagFields) }
       }
     }

@@ -93,18 +93,77 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public var homeVenue: PersonVenue?
     /// The locales they're featured in; nil when the query didn't ask.
     public var locales: [AudienceLocale]?
-    /// Upcoming events they host or play, soonest first; nil when the query didn't ask.
+    /// Upcoming events they host or play and those of the troupes they're in, soonest first; nil when the query
+    /// asked for neither these nor `eventInvolvements`.
     public var events: [PersonEvent]?
     /// The audience's tags on them, by name; nil when the query didn't ask.
     public var tags: [Tag]?
     private var personName: String?
+    private var involvements: Involvements?
 
     /// Their name as the audience shows it, falling back to their Facebook Page's.
     public var name: String { personName ?? page?.name ?? "" }
 
+    /// The same events as `events`, with how they're on each: themselves, or through a troupe (`via`); nil when the
+    /// query didn't ask.
+    public var eventInvolvements: [PersonEventInvolvement]? { involvements?.edges }
+
+    /// The API's `eventInvolvements` connection, of which the SDK reads the edges.
+    private struct Involvements: Codable, Sendable, Hashable { var edges: [PersonEventInvolvement] }
+
     private enum CodingKeys: String, CodingKey {
         case id, order, global, likeRequired, page, homeVenue, locales, events, tags
-        case personName = "name"
+        case personName = "name", involvements = "eventInvolvements"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        order = try container.decode(Int.self, forKey: .order)
+        global = try container.decode(Bool.self, forKey: .global)
+        likeRequired = try container.decode(Bool.self, forKey: .likeRequired)
+        page = try container.decodeIfPresent(Page.self, forKey: .page)
+        homeVenue = try container.decodeIfPresent(PersonVenue.self, forKey: .homeVenue)
+        locales = try container.decodeIfPresent([AudienceLocale].self, forKey: .locales)
+        involvements = try container.decodeIfPresent(Involvements.self, forKey: .involvements)
+        // `Queries.people` asks for eventInvolvements alone: its nodes are the events.
+        events = try container.decodeIfPresent([PersonEvent].self, forKey: .events) ?? involvements?.edges.map(\.event)
+        tags = try container.decodeIfPresent([Tag].self, forKey: .tags)
+        personName = try container.decodeIfPresent(String.self, forKey: .personName)
+    }
+}
+
+/// How a person is on one of their upcoming events: themselves, or through a troupe they're in.
+public struct PersonEventInvolvement: Codable, Sendable, Hashable, Identifiable {
+    public enum Relationship: String, Codable, Sendable, Hashable, CaseIterable {
+        /// They host or play it themselves.
+        case direct = "DIRECT"
+        /// A troupe they're in hosts or plays it.
+        case troupe = "TROUPE"
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Relationship(rawValue: raw.uppercased()) ?? .direct
+        }
+    }
+
+    /// The troupe an event comes through.
+    public struct Troupe: Codable, Sendable, Hashable, Identifiable {
+        public var id: String
+        public var name: String?
+    }
+
+    public var event: PersonEvent
+    public var relationship: Relationship
+    /// Their role on it, like host or performer: the troupe's when it's through one.
+    public var role: String?
+    /// The troupe it comes through, for showing "with <troupe>"; nil when it's their own.
+    public var via: Troupe?
+
+    public var id: String { event.id }
+
+    private enum CodingKeys: String, CodingKey {
+        case event = "node", relationship, role, via
     }
 }
 

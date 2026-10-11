@@ -242,8 +242,12 @@ private func makeClient(
                   {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,"page":null,
                   "homeVenue":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
                     "friends":[{"id":"f-1","name":"Sam Okafor","facebookId":"123","presence":"ONLINE"}]},
-                  "events":[{"id":"e-1","name":"Drag Brunch","startAt":"2026-10-09T21:00:00-07:00",
-                    "locale":{"id":"l-1","name":"Seattle"},"venue":null}]}]}}
+                  "eventInvolvements":{"edges":[
+                    {"relationship":"TROUPE","role":"performer","via":{"id":"pe-9","name":"Those Bitches"},
+                     "node":{"id":"e-1","name":"Drag Brunch","startAt":"2026-10-09T21:00:00-07:00",
+                       "locale":{"id":"l-1","name":"Seattle"},"venue":null}},
+                    {"relationship":"DIRECT","role":"host","via":null,
+                     "node":{"id":"e-2","name":"Bingo","startAt":"2026-10-10T19:00:00-07:00","venue":null}}]}}]}}
                 """#)
             case "Me":
                 return .json(status: 200, body: #"""
@@ -272,6 +276,14 @@ private func makeClient(
         #expect(people.last?.homeVenue?.friends?.first?.name == "Sam Okafor")
         #expect(people.last?.homeVenue?.friends?.first?.presence == .online)
         #expect(people.last?.events?.first?.startDate == Date(timeIntervalSince1970: 1_791_604_800))
+        // Their events include their troupes', and each says how they're on it.
+        #expect(people.last?.events?.map(\.id) == ["e-1", "e-2"])
+        #expect(people.last?.eventInvolvements?.map(\.relationship) == [.troupe, .direct])
+        #expect(people.last?.eventInvolvements?.first?.via?.name == "Those Bitches")
+        #expect(people.last?.eventInvolvements?.last?.via == nil)
+        #expect(people.last?.eventInvolvements?.last?.role == "host")
+        #expect(people.first?.events == nil)
+        #expect(people.first?.eventInvolvements == nil)
 
         let me = try await client.me()
         #expect(me?.firstName == "Rick")
@@ -281,6 +293,23 @@ private func makeClient(
         let audience = try await client.audience()
         #expect(audience.subdomain == "hotmess")
         #expect(audience.theme?.light == [ThemeToken(name: "accent", value: "#9c1c62")])
+    }
+
+    @Test func decodesAPersonsPlainEventsAndRoundTripsTheirInvolvements() throws {
+        let plain = #"{"id":"pe-1","order":1,"global":false,"likeRequired":false,"events":[{"id":"e-1","name":"Solo"}]}"#
+        let person = try JSONDecoder().decode(Person.self, from: Data(plain.utf8))
+        #expect(person.events?.map(\.id) == ["e-1"])
+        #expect(person.eventInvolvements == nil)
+
+        let involved = #"""
+        {"id":"pe-2","order":2,"global":false,"likeRequired":false,"eventInvolvements":{"edges":[
+          {"relationship":"TROUPE","role":null,"via":{"id":"pe-9","name":"Those Bitches"},"node":{"id":"e-2"}}]}}
+        """#
+        let member = try JSONDecoder().decode(Person.self, from: Data(involved.utf8))
+        let again = try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(member))
+        #expect(again == member)
+        #expect(again.eventInvolvements?.first?.via?.id == "pe-9")
+        #expect(again.events?.map(\.id) == ["e-2"])
     }
 
     @Test func throwsGraphQLErrorsWithTheirMessages() async throws {
