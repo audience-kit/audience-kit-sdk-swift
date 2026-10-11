@@ -1,6 +1,12 @@
 # AudienceKit Swift SDK
 
-Swift client for the AudienceKit API.
+Swift client for the AudienceKit API: sign people in with Facebook, then read an
+audience's venues, people, locales and events over GraphQL, and its branding over REST.
+
+- Swift 6, `async`/`await`, everything `Sendable`
+- No dependencies. Facebook Login stays in your app: the SDK takes the access
+  token Facebook gives you.
+- iOS 16+, macOS 13+, and Linux (without the keychain store)
 
 ## Installation
 
@@ -10,11 +16,240 @@ Add the package with Swift Package Manager:
 .package(url: "https://github.com/audience-kit/audience-kit-sdk-swift.git", branch: "main")
 ```
 
-Requires Swift 6.0+, iOS 16+ or macOS 13+.
+and depend on the products you need (in Xcode, **File › Add Package
+Dependencies…** with the same URL):
+
+| Product | What it is | Depends on |
+| --- | --- | --- |
+| `AudienceCore` | The session: configuration, sign-in, token stores, GraphQL transport, branding, errors | nothing |
+| `AudienceKit` | The member-facing API: venues, people, locales, events, RSVPs, location, cover | AudienceCore |
+| `AudienceKitUI` | SwiftUI building blocks and the generated `DesignTokens` | AudienceCore, AudienceKit |
+
+```swift
+.target(name: "MyApp", dependencies: [
+    .product(name: "AudienceKit", package: "audience-kit-sdk-swift"),
+    .product(name: "AudienceKitUI", package: "audience-kit-sdk-swift"),
+])
+```
+
+## Configure a client
+
+```swift
+import AudienceKit
+
+let client = AudienceKitClient(
+    configuration: AudienceKitConfiguration(
+        baseURL: URL(string: "https://api.audiencekit.com")!, // the default
+        host: "hotmess.admin.audiencekit.com",              // or the audience's verified domain
+        facebookAppID: "<your Facebook app ID>"             // the Facebook app this build signs in with
+    ),
+    tokenStore: KeychainTokenStore(service: "social.hotmess.session")
+)
+```
+
+| Setting | What it does |
+| --- | --- |
+| `baseURL` | The API. `http://localhost:3000` for a local server. |
+| `host` | Names the audience. Sent with sign-in so the API checks the Facebook token against the audience's Facebook apps and binds the session to the audience, and used to fetch branding. `<subdomain>.admin.audiencekit.com` works for every audience; the audience's own domain works once it's verified. Without a host, the API only accepts tokens from the AudienceKit platform Facebook app. |
+| `audienceID` | The audience's UUID. Optional: the client reads it from the session token, or looks it up from `host`. |
+| `facebookAppID` | The Facebook app the build uses (production, staging or development). It must be one of the audience's apps. |
+
+`KeychainTokenStore` keeps the session token in the keychain (readable after
+first unlock, so background launches can use it). `InMemoryTokenStore` is for
+tests and previews, and you can write your own `TokenStore`.
+
+## Sign in
+
+Run Facebook Login in your app, then exchange its access token:
+
+```swift
+let device = DeviceDescription(
+    identifier: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString,
+    model: "iPhone17,1",
+    version: "2.0",
+    build: "42"
+)
+let result = try await client.signIn(facebookAccessToken: token.tokenString, device: device)
+print("Signed in as \(result.user.name ?? result.user.id)")
+```
+
+This calls `POST /v1/token`. The SDK stores the session token and sends it on
+every later call as `Authorization: JWT <token>`.
+
+Sign-in can fail with `AudienceKitError.signInRejected` (the Facebook token is
+invalid, or from an app the audience doesn't use) or `.signInFailed(message:)`.
+
+## Session ends
+
+Sessions don't expire, but they end when the person signs out elsewhere or
+removes the app from Facebook. Then any call throws
+`AudienceKitError.unauthorized`, the client deletes the token, and
+`sessionEvents` yields `.sessionEnded`. Watch it from one place to send the
+person back to sign-in:
+
+```swift
+Task {
+    for await event in client.sessionEvents where event == .sessionEnded {
+        showSignIn()
+    }
+}
+```
+
+`client.signOut()` forgets the session on the device. Log out of Facebook in
+your app as well.
+
+## Read the audience
+
+```swift
+let venues = try await client.venues()   // [Venue]: page name and photos, locale, location
+let people = try await client.people()   // [Person]
+let locales = try await client.locales() // [AudienceLocale]
+let me = try await client.me()           // User?
+let audience = try await client.audience() // name, subdomain, theme tokens
+
+for venue in venues {
+    print(venue.name, venue.location?.coordinate as Any, client.url(for: venue.page?.photoUrl) as Any)
+}
+```
+
+Objects' `id` fields are the records' UUIDs, the same IDs the REST endpoints
+take. `node(id:)` takes a Relay global ID (base64 of `gid://…/Venue/<uuid>`);
+`GlobalID(id)?.modelID` decodes one back to its UUID.
+
+Run any other operation and decode it into your own type:
+
+```swift
+struct VenueNames: Decodable, Sendable {
+    struct Venue: Decodable, Sendable { let id: String; let page: Page }
+    let venues: [Venue]
+}
+
+let names = try await client.graphQL(
+    "query VenueNames { venues { id page { \(Queries.pageFields) } } }",
+    operationName: "VenueNames",
+    as: VenueNames.self
+)
+```
+
+Variables are `[String: GraphQLValue]`, which you can write as literals:
+`variables: ["id": "…"]`. If the response has `errors`, the call throws
+`AudienceKitError.graphQL([GraphQLError])` with each message, path and
+extensions.
+
+## Branding
+
+Branding is public, so you can skin the app before sign-in:
+
+```swift
+let branding = try await client.branding() // GET /v1/branding?host=<host>
+branding.audience.name
+branding.theme.tagline
+if let accent = branding.theme.color("accent", dark: colorScheme == .dark) {
+    Color(red: accent.red, green: accent.green, blue: accent.blue, opacity: accent.alpha)
+}
+```
+
+`AudienceKitUI.DesignTokens` (add `import AudienceKitUI`) carries the whole design system: every theme's colours (`DesignTokens.hotMess`,
+`.hotMessDark`, `.light`, `.dark`), the presets by key (`DesignTokens.presets["hot_mess"]`), and
+`Spacing`, `Radius`, `Size`, `Opacity` and `Typography`. It's generated from
+the AudienceKit design system's tokens, so don't edit it by hand. Overlay the
+audience's `branding.theme` overrides on its preset's colours.
+
+## Mobile operations
+
+The calls the Hot Mess apps make for the signed-in member:
+
+```swift
+let here = Coordinates(latitude: 37.77, longitude: -122.42)
+let locale = try await client.closestLocale(near: here) // AudienceLocale?
+try await client.setRSVP(.attending, forEvent: eventID) // mirrored to Facebook
+try await client.registerDevice(notificationToken: hexToken)
+```
+
+`reportLocation` records where the member is and returns what's happening
+there. Select the fields you need and decode into your own type; pass a
+`decoder` when your models need their own date strategy:
+
+```swift
+let document = Queries.reportLocation(selecting: "title venue { id name } venues { id name distance }")
+let now = try await client.graphQL(document, variables: ["position": here.graphQLValue],
+                                   as: MyNowResponse.self, decoder: myDecoder)
+```
+
+The API also serves `venue(id:)`, `event(id:)`, `person(id:)` and `locale(id:)`
+by UUID, `venues(near:)` nearest first with each `distance`, and each
+locale's and venue's upcoming `events`.
+
+## Cover
+
+A venue's `coverCharge` is tonight's price; when `payable`, the member can pay
+it in the app and gets a pass:
+
+```swift
+let cover = try await client.venueCover(venueID: venueID) // coverCharge, viewerAdmission
+let purchase = try await client.buyCover(venueID: venueID)
+let pass: Admission
+if purchase.isSquare {
+    // Square: SQIPInAppPaymentsSDK.squareApplicationID = purchase.squareApplicationId, then take a card,
+    // Apple Pay or Google Pay with Square's In-App Payments SDK and send its nonce:
+    pass = try await client.payCover(admissionID: purchase.admission.id, sourceID: nonce)
+} else {
+    // Stripe Connect direct charge: present PaymentSheet with
+    // purchase.paymentIntentClientSecret, STPAPIClient.shared.publishableKey = purchase.publishableKey
+    // and STPAPIClient.shared.stripeAccount = purchase.stripeAccountId. Then:
+    pass = try await client.confirmCover(admissionID: purchase.admission.id)
+}
+let passes = try await client.admissions()
+_ = try await client.refundAdmission(admissionID: pass.id) // while pass.isRefundable
+```
+
+Make the pass's QR code on the device, so it works with no signal. It changes
+every 30 seconds (Apple platforms, CryptoKit):
+
+```swift
+let code = CoverPass.code(admissionID: pass.id, secret: pass.passSecret ?? "")
+```
+
+Door staff see venues in `doorVenues()` and check codes with
+`scanAdmission(venueID:code:)`, which returns an `outcome` (`.admit`,
+`.reEntry`, `.expired`, ...) and a `message` for the door.
+
+## REST endpoints
+
+For anything GraphQL doesn't cover, send the request through the client so it
+carries the session and handles a rejected session the same way:
+
+```swift
+let data = try await client.data(for: APIRequest(method: "POST", path: "/", authenticated: false))
+```
+
+## Errors
+
+| `AudienceKitError` | When |
+| --- | --- |
+| `.notSignedIn` | No stored session for a call that needs one. |
+| `.unauthorized` | The API rejected the session (401). The session has ended. |
+| `.signInRejected`, `.signInFailed(message:)` | `POST /v1/token` refused the Facebook token (401), or failed (400). |
+| `.forbidden` | 403, e.g. a session bound to another audience. |
+| `.notFound` | 404: no such audience, record or host. |
+| `.http(status:)` | Any other unsuccessful status. |
+| `.network(URLError)` | No response: offline, timeout, TLS. |
+| `.decoding(String)` | The response wasn't what the SDK expected. |
+| `.graphQL([GraphQLError])` | The GraphQL response had errors. |
+| `.missingConfiguration(String)`, `.tokenStorage(String)` | Setup problems. |
 
 ## Development
+
+Run from the repository root:
 
 ```sh
 swift build
 swift test
+xcodebuild build -scheme AudienceKit-Package -destination 'generic/platform=iOS Simulator'
 ```
+
+Tests stub HTTP with a `URLProtocol`, so they run offline.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

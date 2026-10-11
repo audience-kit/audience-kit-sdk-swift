@@ -1,4 +1,6 @@
 // swift-tools-version: 6.0
+// The member-facing AudienceKit Swift SDK: what an audience's own app (Hot Mess)
+// builds on. The staff-side management modules are not part of this package.
 import PackageDescription
 
 let package = Package(
@@ -8,10 +10,14 @@ let package = Package(
         .macOS(.v13),
     ],
     products: [
+        .library(name: "AudienceCore", targets: ["AudienceCore"]),
         .library(name: "AudienceKit", targets: ["AudienceKit"]),
+        .library(name: "AudienceKitUI", targets: ["AudienceKitUI"]),
     ],
     targets: [
-        .target(name: "AudienceKit"),
-        .testTarget(name: "AudienceKitTests", dependencies: ["AudienceKit"]),
+        .target(name: "AudienceCore"),
+        .target(name: "AudienceKit", dependencies: ["AudienceCore"]),
+        .target(name: "AudienceKitUI", dependencies: ["AudienceCore", "AudienceKit"]),
+        .testTarget(name: "AudienceKitTests", dependencies: ["AudienceKit", "AudienceCore", "AudienceKitUI"]),
     ]
 )
