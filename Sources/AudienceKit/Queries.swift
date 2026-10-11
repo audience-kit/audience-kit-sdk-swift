@@ -27,7 +27,7 @@ public enum Queries {
         id name hidden order photoUrl bannerUrl
         profile { facebook { page { \(pageFields) } } }
         locale { \(localeFields) }
-        location { id point googlePlaceId address }
+        location { id point address places { placeId } }
         tags { \(tagFields) }
       }
     }
