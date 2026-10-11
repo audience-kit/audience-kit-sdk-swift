@@ -11,8 +11,9 @@ public enum Queries {
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
     /// friends are there now.
     public static let personVenueFields = "id name photoUrl locale { id name } friends { id name facebookId presence }"
-    /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`.
-    public static let personEventFields = "id name startAt locale { id name } venue { \(personVenueFields) } tags { \(tagFields) }"
+    /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
+    /// `venue` is the events facet: a display name ("To be announced" when there is none) and the venue, if any.
+    public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
 
     public static let audience = """
     query Audience {
@@ -36,9 +37,9 @@ public enum Queries {
     query People {
       people {
         id name order global likeRequired page { \(pageFields) }
-        homeVenue { \(personVenueFields) }
+        venues { home { \(personVenueFields) } }
         locales { id name }
-        eventInvolvements { edges { relationship role via { id name } node { \(personEventFields) } } }
+        events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
         tags { \(tagFields) }
       }
     }
@@ -119,8 +120,10 @@ public enum Queries {
     query VenueCover($id: ID!) {
       venue(id: $id) {
         id name
-        coverCharge { \(coverChargeFields) }
-        viewerAdmission { \(admissionFields) }
+        cover {
+          charge { \(coverChargeFields) }
+          viewerAdmission { \(admissionFields) }
+        }
       }
     }
     """
@@ -133,13 +136,13 @@ public enum Queries {
 
     public static let doorVenues = """
     query DoorVenues {
-      doorVenues { id name photoUrl door { \(doorNightFields) } }
+      doorVenues { id name photoUrl cover { door { \(doorNightFields) } } }
     }
     """
 
     public static let venueDoor = """
     query VenueDoor($id: ID!, $night: ISO8601Date) {
-      venue(id: $id) { id name photoUrl door(night: $night) { \(doorNightFields) } }
+      venue(id: $id) { id name photoUrl cover { door(night: $night) { \(doorNightFields) } } }
     }
     """
 

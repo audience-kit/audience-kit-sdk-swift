@@ -240,14 +240,17 @@ private func makeClient(
                   "page":{"id":"p-2","name":"DJ Example","photoUrl":null,"coverImageUrl":null},
                   "locales":[{"id":"l-2","name":"Portland"}]},
                   {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,"page":null,
-                  "homeVenue":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
-                    "friends":[{"id":"f-1","name":"Sam Okafor","facebookId":"123","presence":"ONLINE"}]},
-                  "eventInvolvements":{"edges":[
+                  "venues":{"home":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
+                    "friends":[{"id":"f-1","name":"Sam Okafor","facebookId":"123","presence":"ONLINE"}]}},
+                  "events":{"involvements":{"edges":[
                     {"relationship":"TROUPE","role":"performer","via":{"id":"pe-9","name":"Those Bitches"},
                      "node":{"id":"e-1","name":"Drag Brunch","startAt":"2026-10-09T21:00:00-07:00",
-                       "locale":{"id":"l-1","name":"Seattle"},"venue":null}},
+                       "locale":{"id":"l-1","name":"Seattle"},
+                       "venue":{"name":"Neighbours","venue":{"id":"v-1","name":"Neighbours","photoUrl":null}}}},
+                    null,
                     {"relationship":"DIRECT","role":"host","via":null,
-                     "node":{"id":"e-2","name":"Bingo","startAt":"2026-10-10T19:00:00-07:00","venue":null}}]}}]}}
+                     "node":{"id":"e-2","name":"Bingo","startAt":"2026-10-10T19:00:00-07:00",
+                       "venue":{"name":"To be announced","venue":null}}}]}}}]}}
                 """#)
             case "Me":
                 return .json(status: 200, body: #"""
@@ -275,6 +278,10 @@ private func makeClient(
         #expect(people.last?.homeVenue?.locale?.id == "l-1")
         #expect(people.last?.homeVenue?.friends?.first?.name == "Sam Okafor")
         #expect(people.last?.homeVenue?.friends?.first?.presence == .online)
+        // An event's venue comes in its facet, with a name even while it's to be announced.
+        #expect(people.last?.events?.first?.venue?.id == "v-1")
+        #expect(people.last?.events?.last?.venue == nil)
+        #expect(people.last?.events?.last?.venueName == "To be announced")
         #expect(people.last?.events?.first?.startDate == Date(timeIntervalSince1970: 1_791_604_800))
         // Their events include their troupes', and each says how they're on it.
         #expect(people.last?.events?.map(\.id) == ["e-1", "e-2"])
@@ -296,20 +303,31 @@ private func makeClient(
     }
 
     @Test func decodesAPersonsPlainEventsAndRoundTripsTheirInvolvements() throws {
-        let plain = #"{"id":"pe-1","order":1,"global":false,"likeRequired":false,"events":[{"id":"e-1","name":"Solo"}]}"#
+        let plain = #"""
+        {"id":"pe-1","order":1,"global":false,"likeRequired":false,"venues":{"home":null},
+         "events":{"upcoming":{"nodes":[{"id":"e-1","name":"Solo"},null]}}}
+        """#
         let person = try JSONDecoder().decode(Person.self, from: Data(plain.utf8))
         #expect(person.events?.map(\.id) == ["e-1"])
         #expect(person.eventInvolvements == nil)
+        #expect(person.homeVenue == nil)
 
         let involved = #"""
-        {"id":"pe-2","order":2,"global":false,"likeRequired":false,"eventInvolvements":{"edges":[
-          {"relationship":"TROUPE","role":null,"via":{"id":"pe-9","name":"Those Bitches"},"node":{"id":"e-2"}}]}}
+        {"id":"pe-2","order":2,"global":false,"likeRequired":false,
+         "venues":{"home":{"id":"v-1","name":"Neighbours"}},
+         "events":{"involvements":{"edges":[
+          {"relationship":"TROUPE","role":null,"via":{"id":"pe-9","name":"Those Bitches"},
+           "node":{"id":"e-2","venue":{"name":"Neighbours","venue":{"id":"v-1"}}}},
+          {"relationship":"DIRECT","role":null,"via":null,"node":null}]}}}
         """#
         let member = try JSONDecoder().decode(Person.self, from: Data(involved.utf8))
         let again = try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(member))
         #expect(again == member)
         #expect(again.eventInvolvements?.first?.via?.id == "pe-9")
         #expect(again.events?.map(\.id) == ["e-2"])
+        #expect(again.events?.first?.venue?.id == "v-1")
+        #expect(again.events?.first?.venueName == "Neighbours")
+        #expect(again.homeVenue?.name == "Neighbours")
     }
 
     @Test func throwsGraphQLErrorsWithTheirMessages() async throws {
@@ -573,7 +591,7 @@ private func makeClient(
             if operation == "DoorVenues" {
                 return .json(status: 200, body: #"""
                 {"data":{"doorVenues":[{"id":"v-1","name":"The Stud","photoUrl":null,
-                  "door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}]}}
+                  "cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}]}}
                 """#)
             }
             return .json(status: 200, body: #"""
@@ -592,6 +610,35 @@ private func makeClient(
         #expect(result.message.hasPrefix("Re-entry"))
         #expect(try #require(stub.requests.last).jsonBody()["variables"] as? [String: String]
             == ["venueId": "v-1", "code": "HMC1.a.1.b"])
+    }
+
+    @Test func decodesAVenuesCoverFacet() async throws {
+        let stub = Stub { request in
+            let id = (try? request.jsonBody()["variables"] as? [String: String])?["id"]
+            if id == "v-2" {
+                // A venue that takes no cover has no cover facet.
+                return .json(status: 200, body: #"{"data":{"venue":{"id":"v-2","name":"Free Bar","cover":null}}}"#)
+            }
+            return .json(status: 200, body: #"""
+            {"data":{"venue":{"id":"v-1","name":"The Stud","cover":{
+              "charge":{"amountCents":1000,"totalCents":1112,"feeCents":112,"currency":"usd","night":"2026-10-09",
+                "from":"21:00","payable":true,"event":null},
+              "viewerAdmission":\#(Self.admission)}}}}
+            """#)
+        }
+        let (client, _) = makeClient(stub)
+
+        let coverResponse = try await client.venueCover(venueID: "v-1")
+        let cover = try #require(coverResponse)
+        #expect(cover.coverCharge?.totalCents == 1112)
+        #expect(cover.coverCharge?.payable == true)
+        #expect(cover.viewerAdmission?.status == .pending)
+        #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
+
+        let freeResponse = try await client.venueCover(venueID: "v-2")
+        let free = try #require(freeResponse)
+        #expect(free.coverCharge == nil)
+        #expect(free.viewerAdmission == nil)
     }
 
     @Test func toleratesNewStatusesAndOutcomes() throws {
