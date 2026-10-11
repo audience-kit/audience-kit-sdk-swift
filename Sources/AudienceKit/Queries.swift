@@ -5,7 +5,7 @@ import Foundation
 /// in their own operations and decode into the same models.
 public enum Queries {
     public static let pageFields = "id name photoUrl bannerUrl"
-    public static let localeFields = "id name label cityNames bannerUrl googlePlaceId"
+    public static let localeFields = "id name label cityNames bannerUrl profile { places { placeId } }"
     /// A tag on a venue, person or event: its name and chip color.
     public static let tagFields = "id name color"
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
@@ -25,9 +25,9 @@ public enum Queries {
     query Venues {
       venues {
         id name hidden order photoUrl bannerUrl
-        page { \(pageFields) }
+        profile { facebook { page { \(pageFields) } } }
         locale { \(localeFields) }
-        location { id point googlePlaceId address }
+        location { id point address places { placeId } }
         tags { \(tagFields) }
       }
     }
@@ -36,7 +36,7 @@ public enum Queries {
     public static let people = """
     query People {
       people {
-        id name order global likeRequired page { \(pageFields) }
+        id name order global likeRequired profile { facebook { page { \(pageFields) } } }
         venues { home { \(personVenueFields) } }
         locales { id name }
         events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
