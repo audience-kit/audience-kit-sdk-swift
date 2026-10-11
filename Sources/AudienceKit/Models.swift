@@ -29,7 +29,7 @@ public struct Page: Codable, Sendable, Hashable, Identifiable {
     public var name: String
     /// Profile picture, as the API sends it. Use ``AudienceKitClient/url(for:)`` to resolve relative paths.
     public var photoUrl: String?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
 }
 
 /// A city or region the audience is active in.
@@ -38,7 +38,7 @@ public struct AudienceLocale: Codable, Sendable, Hashable, Identifiable {
     public var name: String?
     public var label: String?
     public var cityNames: [String]?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
     /// Its Google place ID (a city or region), when an admin has set one.
     public var googlePlaceId: String?
 }
@@ -63,7 +63,7 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var hidden: Bool
     public var order: Int
     public var photoUrl: String?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
     /// Its Facebook Page; venues added without one have none.
     public var page: Page?
     public var locale: AudienceLocale
@@ -76,7 +76,7 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var name: String { venueName ?? page?.name ?? "" }
 
     private enum CodingKeys: String, CodingKey {
-        case id, hidden, order, photoUrl, coverImageUrl, page, locale, location, tags
+        case id, hidden, order, photoUrl, bannerUrl, page, locale, location, tags
         case venueName = "name"
     }
 }

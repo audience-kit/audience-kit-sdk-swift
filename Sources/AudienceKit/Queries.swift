@@ -4,8 +4,8 @@ import Foundation
 /// The GraphQL documents behind the client's typed helpers. Public so apps can reuse the fragments
 /// in their own operations and decode into the same models.
 public enum Queries {
-    public static let pageFields = "id name photoUrl coverImageUrl"
-    public static let localeFields = "id name label cityNames coverImageUrl googlePlaceId"
+    public static let pageFields = "id name photoUrl bannerUrl"
+    public static let localeFields = "id name label cityNames bannerUrl googlePlaceId"
     /// A tag on a venue, person or event: its name and chip color.
     public static let tagFields = "id name color"
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
@@ -24,7 +24,7 @@ public enum Queries {
     public static let venues = """
     query Venues {
       venues {
-        id name hidden order photoUrl coverImageUrl
+        id name hidden order photoUrl bannerUrl
         page { \(pageFields) }
         locale { \(localeFields) }
         location { id point googlePlaceId address }

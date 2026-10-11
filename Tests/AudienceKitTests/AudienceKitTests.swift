@@ -173,13 +173,13 @@ private func makeClient(
     static let venuesResponse = #"""
     {"data":{"venues":[{
       "id":"Z2lkOi8vaG90LW1lc3MvVmVudWUvMTIz","name":null,"hidden":false,"order":3,
-      "photoUrl":"/v1/photos/abc","coverImageUrl":null,
-      "page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","coverImageUrl":null},
-      "locale":{"id":"l-1","name":"San Francisco","label":"SF","cityNames":null,"coverImageUrl":null},
+      "photoUrl":"/v1/photos/abc","bannerUrl":null,
+      "page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","bannerUrl":null},
+      "locale":{"id":"l-1","name":"San Francisco","label":"SF","cityNames":null,"bannerUrl":null},
       "location":{"id":"loc-1","point":"POINT (-122.4194 37.7749)"}
     },{
-      "id":"v-2","name":"Pony","hidden":false,"order":4,"photoUrl":null,"coverImageUrl":null,"page":null,
-      "locale":{"id":"l-2","name":"Seattle","label":"SEA","cityNames":["Seattle","Capitol Hill"],"coverImageUrl":null},
+      "id":"v-2","name":"Pony","hidden":false,"order":4,"photoUrl":null,"bannerUrl":null,"page":null,
+      "locale":{"id":"l-2","name":"Seattle","label":"SEA","cityNames":["Seattle","Capitol Hill"],"bannerUrl":null},
       "location":null,"tags":[{"id":"t-1","name":"Leather","color":"#222222"}]
     }]}}
     """#
@@ -237,7 +237,7 @@ private func makeClient(
             case "People":
                 return .json(status: 200, body: #"""
                 {"data":{"people":[{"id":"pe-1","order":1,"global":false,"likeRequired":true,
-                  "page":{"id":"p-2","name":"DJ Example","photoUrl":null,"coverImageUrl":null},
+                  "page":{"id":"p-2","name":"DJ Example","photoUrl":null,"bannerUrl":null},
                   "locales":[{"id":"l-2","name":"Portland"}]},
                   {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,"page":null,
                   "venues":{"home":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
