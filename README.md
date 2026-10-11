@@ -120,12 +120,12 @@ Run any other operation and decode it into your own type:
 
 ```swift
 struct VenueNames: Decodable, Sendable {
-    struct Venue: Decodable, Sendable { let id: String; let page: Page }
+    struct Venue: Decodable, Sendable { let id: String; let name: String? }
     let venues: [Venue]
 }
 
 let names = try await client.graphQL(
-    "query VenueNames { venues { id page { \(Queries.pageFields) } } }",
+    "query VenueNames { venues { id name } }",
     operationName: "VenueNames",
     as: VenueNames.self
 )

@@ -39,8 +39,50 @@ public struct AudienceLocale: Codable, Sendable, Hashable, Identifiable {
     public var label: String?
     public var cityNames: [String]?
     public var bannerUrl: String?
-    /// Its Google place ID (a city or region), when an admin has set one.
+    /// Its Google place ID (a city or region), when an admin has set one: the API's `profile { places { placeId } }`.
     public var googlePlaceId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, label, cityNames, bannerUrl, profile
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        cityNames = try container.decodeIfPresent([String].self, forKey: .cityNames)
+        bannerUrl = try container.decodeIfPresent(String.self, forKey: .bannerUrl)
+        googlePlaceId = try container.decodeIfPresent(ListingProfile.self, forKey: .profile)?.places?.placeId
+    }
+
+    /// Writes the API's shape, so an encoded locale decodes back the same.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(cityNames, forKey: .cityNames)
+        try container.encodeIfPresent(bannerUrl, forKey: .bannerUrl)
+        if let googlePlaceId {
+            try container.encode(ListingProfile(places: .init(placeId: googlePlaceId)), forKey: .profile)
+        }
+    }
+}
+
+/// A venue, person or locale's `profile` facet, as far as the SDK reads it: the Facebook Page (`facebook { page }`)
+/// and the Google place ID (`places { placeId }`). Either module may be left out of the query.
+struct ListingProfile: Codable, Sendable, Hashable {
+    struct Facebook: Codable, Sendable, Hashable { var page: Page? }
+    struct Places: Codable, Sendable, Hashable { var placeId: String? }
+
+    var facebook: Facebook?
+    var places: Places?
+
+    init(facebook: Facebook? = nil, places: Places? = nil) {
+        self.facebook = facebook
+        self.places = places
+    }
 }
 
 /// A place: a Google place with a point.
@@ -64,7 +106,7 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var order: Int
     public var photoUrl: String?
     public var bannerUrl: String?
-    /// Its Facebook Page; venues added without one have none.
+    /// Its Facebook Page, the API's `profile { facebook { page } }`; venues added without one have none.
     public var page: Page?
     public var locale: AudienceLocale
     public var location: Location?
@@ -76,8 +118,39 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var name: String { venueName ?? page?.name ?? "" }
 
     private enum CodingKeys: String, CodingKey {
-        case id, hidden, order, photoUrl, bannerUrl, page, locale, location, tags
+        case id, hidden, order, photoUrl, bannerUrl, profile, locale, location, tags
         case venueName = "name"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        hidden = try container.decode(Bool.self, forKey: .hidden)
+        order = try container.decode(Int.self, forKey: .order)
+        photoUrl = try container.decodeIfPresent(String.self, forKey: .photoUrl)
+        bannerUrl = try container.decodeIfPresent(String.self, forKey: .bannerUrl)
+        page = try container.decodeIfPresent(ListingProfile.self, forKey: .profile)?.facebook?.page
+        locale = try container.decode(AudienceLocale.self, forKey: .locale)
+        location = try container.decodeIfPresent(Location.self, forKey: .location)
+        tags = try container.decodeIfPresent([Tag].self, forKey: .tags)
+        venueName = try container.decodeIfPresent(String.self, forKey: .venueName)
+    }
+
+    /// Writes the API's shape, so an encoded venue decodes back the same.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(hidden, forKey: .hidden)
+        try container.encode(order, forKey: .order)
+        try container.encodeIfPresent(photoUrl, forKey: .photoUrl)
+        try container.encodeIfPresent(bannerUrl, forKey: .bannerUrl)
+        if let page {
+            try container.encode(ListingProfile(facebook: .init(page: page)), forKey: .profile)
+        }
+        try container.encode(locale, forKey: .locale)
+        try container.encodeIfPresent(location, forKey: .location)
+        try container.encodeIfPresent(tags, forKey: .tags)
+        try container.encodeIfPresent(venueName, forKey: .venueName)
     }
 }
 
@@ -87,7 +160,7 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public var order: Int
     public var global: Bool
     public var likeRequired: Bool
-    /// Their Facebook Page; talent added by name has none yet.
+    /// Their Facebook Page, the API's `profile { facebook { page } }`; talent added by name has none yet.
     public var page: Page?
     /// The venue they are based at, if any: the API's `venues { home }`.
     public var homeVenue: PersonVenue?
@@ -109,7 +182,7 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public var eventInvolvements: [PersonEventInvolvement]? { involvements }
 
     private enum CodingKeys: String, CodingKey {
-        case id, order, global, likeRequired, page, locales, tags, venues, events
+        case id, order, global, likeRequired, profile, locales, tags, venues, events
         case personName = "name"
     }
 
@@ -125,7 +198,7 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
         order = try container.decode(Int.self, forKey: .order)
         global = try container.decode(Bool.self, forKey: .global)
         likeRequired = try container.decode(Bool.self, forKey: .likeRequired)
-        page = try container.decodeIfPresent(Page.self, forKey: .page)
+        page = try container.decodeIfPresent(ListingProfile.self, forKey: .profile)?.facebook?.page
         homeVenue = try container.decodeIfPresent(VenuesFacet.self, forKey: .venues)?.home
         locales = try container.decodeIfPresent([AudienceLocale].self, forKey: .locales)
         let eventsFacet = try container.decodeIfPresent(EventsFacet.self, forKey: .events)
@@ -143,7 +216,9 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
         try container.encode(order, forKey: .order)
         try container.encode(global, forKey: .global)
         try container.encode(likeRequired, forKey: .likeRequired)
-        try container.encodeIfPresent(page, forKey: .page)
+        if let page {
+            try container.encode(ListingProfile(facebook: .init(page: page)), forKey: .profile)
+        }
         try container.encodeIfPresent(locales, forKey: .locales)
         try container.encodeIfPresent(tags, forKey: .tags)
         try container.encodeIfPresent(personName, forKey: .personName)
