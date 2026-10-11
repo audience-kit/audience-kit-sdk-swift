@@ -29,7 +29,7 @@ public struct Page: Codable, Sendable, Hashable, Identifiable {
     public var name: String
     /// Profile picture, as the API sends it. Use ``AudienceKitClient/url(for:)`` to resolve relative paths.
     public var photoUrl: String?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
 }
 
 /// A city or region the audience is active in.
@@ -38,7 +38,7 @@ public struct AudienceLocale: Codable, Sendable, Hashable, Identifiable {
     public var name: String?
     public var label: String?
     public var cityNames: [String]?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
     /// Its Google place ID (a city or region), when an admin has set one.
     public var googlePlaceId: String?
 }
@@ -63,7 +63,7 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var hidden: Bool
     public var order: Int
     public var photoUrl: String?
-    public var coverImageUrl: String?
+    public var bannerUrl: String?
     /// Its Facebook Page; venues added without one have none.
     public var page: Page?
     public var locale: AudienceLocale
@@ -76,7 +76,7 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
     public var name: String { venueName ?? page?.name ?? "" }
 
     private enum CodingKeys: String, CodingKey {
-        case id, hidden, order, photoUrl, coverImageUrl, page, locale, location, tags
+        case id, hidden, order, photoUrl, bannerUrl, page, locale, location, tags
         case venueName = "name"
     }
 }
@@ -89,32 +89,35 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public var likeRequired: Bool
     /// Their Facebook Page; talent added by name has none yet.
     public var page: Page?
-    /// The venue they are based at, if any.
+    /// The venue they are based at, if any: the API's `venues { home }`.
     public var homeVenue: PersonVenue?
     /// The locales they're featured in; nil when the query didn't ask.
     public var locales: [AudienceLocale]?
-    /// Upcoming events they host or play and those of the troupes they're in, soonest first; nil when the query
-    /// asked for neither these nor `eventInvolvements`.
+    /// Upcoming events they host or play and those of the troupes they're in, soonest first: the API's
+    /// `events { upcoming }`, or the nodes of `events { involvements }`; nil when the query asked for neither.
     public var events: [PersonEvent]?
     /// The audience's tags on them, by name; nil when the query didn't ask.
     public var tags: [Tag]?
     private var personName: String?
-    private var involvements: Involvements?
+    private var involvements: [PersonEventInvolvement]?
 
     /// Their name as the audience shows it, falling back to their Facebook Page's.
     public var name: String { personName ?? page?.name ?? "" }
 
     /// The same events as `events`, with how they're on each: themselves, or through a troupe (`via`); nil when the
     /// query didn't ask.
-    public var eventInvolvements: [PersonEventInvolvement]? { involvements?.edges }
-
-    /// The API's `eventInvolvements` connection, of which the SDK reads the edges.
-    private struct Involvements: Codable, Sendable, Hashable { var edges: [PersonEventInvolvement] }
+    public var eventInvolvements: [PersonEventInvolvement]? { involvements }
 
     private enum CodingKeys: String, CodingKey {
-        case id, order, global, likeRequired, page, homeVenue, locales, events, tags
-        case personName = "name", involvements = "eventInvolvements"
+        case id, order, global, likeRequired, page, locales, tags, venues, events
+        case personName = "name"
     }
+
+    /// The API's `venues` facet.
+    private enum VenuesKeys: String, CodingKey { case home }
+    /// The API's `events` facet: two connections.
+    private enum EventsKeys: String, CodingKey { case upcoming, involvements }
+    private enum ConnectionKeys: String, CodingKey { case nodes, edges }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -123,13 +126,89 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
         global = try container.decode(Bool.self, forKey: .global)
         likeRequired = try container.decode(Bool.self, forKey: .likeRequired)
         page = try container.decodeIfPresent(Page.self, forKey: .page)
-        homeVenue = try container.decodeIfPresent(PersonVenue.self, forKey: .homeVenue)
+        homeVenue = try container.decodeIfPresent(VenuesFacet.self, forKey: .venues)?.home
         locales = try container.decodeIfPresent([AudienceLocale].self, forKey: .locales)
-        involvements = try container.decodeIfPresent(Involvements.self, forKey: .involvements)
-        // `Queries.people` asks for eventInvolvements alone: its nodes are the events.
-        events = try container.decodeIfPresent([PersonEvent].self, forKey: .events) ?? involvements?.edges.map(\.event)
+        let eventsFacet = try container.decodeIfPresent(EventsFacet.self, forKey: .events)
+        involvements = eventsFacet?.involvements?.edges
+        // `Queries.people` asks for the involvements alone: their nodes are the events.
+        events = eventsFacet?.upcoming?.nodes ?? involvements?.map(\.event)
         tags = try container.decodeIfPresent([Tag].self, forKey: .tags)
         personName = try container.decodeIfPresent(String.self, forKey: .personName)
+    }
+
+    /// Writes the API's shape, so an encoded person decodes back the same.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(order, forKey: .order)
+        try container.encode(global, forKey: .global)
+        try container.encode(likeRequired, forKey: .likeRequired)
+        try container.encodeIfPresent(page, forKey: .page)
+        try container.encodeIfPresent(locales, forKey: .locales)
+        try container.encodeIfPresent(tags, forKey: .tags)
+        try container.encodeIfPresent(personName, forKey: .personName)
+        if let homeVenue {
+            var venues = container.nestedContainer(keyedBy: VenuesKeys.self, forKey: .venues)
+            try venues.encode(homeVenue, forKey: .home)
+        }
+        if events != nil || involvements != nil {
+            var eventsFacet = container.nestedContainer(keyedBy: EventsKeys.self, forKey: .events)
+            if let events {
+                var upcoming = eventsFacet.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .upcoming)
+                try upcoming.encode(events, forKey: .nodes)
+            }
+            if let involvements {
+                var connection = eventsFacet.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .involvements)
+                try connection.encode(involvements, forKey: .edges)
+            }
+        }
+    }
+
+    /// `venues { home }`.
+    private struct VenuesFacet: Decodable {
+        var home: PersonVenue?
+    }
+
+    /// `events { upcoming { nodes } involvements { edges } }`, either of which the query may leave out.
+    private struct EventsFacet: Decodable {
+        var upcoming: NodeList<PersonEvent>?
+        var involvements: InvolvementEdges?
+    }
+
+    /// A `PersonEventConnection`'s edges. Edges and nodes are nullable in the schema; null ones are skipped.
+    private struct InvolvementEdges: Decodable {
+        var edges: [PersonEventInvolvement]?
+
+        private struct Edge: Decodable {
+            var node: PersonEvent?
+            var relationship: PersonEventInvolvement.Relationship?
+            var role: String?
+            var via: PersonEventInvolvement.Troupe?
+        }
+
+        private enum CodingKeys: String, CodingKey { case edges }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let raw = try container.decodeIfPresent([Edge?].self, forKey: .edges)
+            edges = raw?.compactMap { (edge: Edge?) -> PersonEventInvolvement? in
+                guard let edge, let node = edge.node else { return nil }
+                return PersonEventInvolvement(event: node, relationship: edge.relationship ?? .direct,
+                                              role: edge.role, via: edge.via)
+            }
+        }
+    }
+}
+
+/// A Relay connection's `nodes`, skipping null ones; nil when the query selected edges instead.
+struct NodeList<Item: Decodable>: Decodable {
+    var nodes: [Item]?
+
+    private enum CodingKeys: String, CodingKey { case nodes }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nodes = try container.decodeIfPresent([Item?].self, forKey: .nodes)?.compactMap { $0 }
     }
 }
 
@@ -185,12 +264,32 @@ public struct PersonEvent: Codable, Sendable, Hashable, Identifiable {
     public var startAt: String?
     /// Its venue's locale, or its series' while the venue is still to be announced.
     public var locale: AudienceLocale?
-    public var venue: PersonVenue?
     /// The audience's tags on it, by name; nil when the query didn't ask.
     public var tags: [Tag]?
+    /// The API's `venue` facet: a display name and the venue, if any.
+    private var venueFacet: VenueFacet?
+
+    /// Where it is; nil while the venue is still to be announced, or when the query didn't ask.
+    public var venue: PersonVenue? {
+        get { venueFacet?.venue }
+        set { venueFacet = VenueFacet(name: venueFacet?.name, venue: newValue) }
+    }
+
+    /// Its venue's name as the API shows it, e.g. "To be announced" when there is none; nil when the query didn't ask.
+    public var venueName: String? { venueFacet?.name }
 
     public var startDate: Date? {
         startAt.flatMap { try? Date($0, strategy: .iso8601) }
+    }
+
+    private struct VenueFacet: Codable, Sendable, Hashable {
+        var name: String?
+        var venue: PersonVenue?
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, startAt, locale, tags
+        case venueFacet = "venue"
     }
 }
 
@@ -402,10 +501,25 @@ public struct CoverPurchase: Codable, Sendable, Hashable {
 public struct VenueCover: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
+    /// The API's `cover` facet; nil when the venue takes no cover.
+    private var cover: Facet?
+
     /// Tonight's cover, or `nil` when there is none.
-    public var coverCharge: CoverCharge?
+    public var coverCharge: CoverCharge? {
+        get { cover?.charge }
+        set { cover = Facet(charge: newValue, viewerAdmission: cover?.viewerAdmission) }
+    }
     /// The signed-in user's cover for tonight, paid or being paid.
-    public var viewerAdmission: Admission?
+    public var viewerAdmission: Admission? {
+        get { cover?.viewerAdmission }
+        set { cover = Facet(charge: cover?.charge, viewerAdmission: newValue) }
+    }
+
+    /// `cover { charge viewerAdmission }`.
+    private struct Facet: Codable, Sendable, Hashable {
+        var charge: CoverCharge?
+        var viewerAdmission: Admission?
+    }
 }
 
 /// A venue's door for one night.
@@ -425,7 +539,19 @@ public struct DoorVenue: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
     public var photoUrl: String?
-    public var door: DoorNight?
+    /// The API's `cover` facet; nil when the venue takes no cover.
+    private var cover: Facet?
+
+    /// The night's door, or `nil` unless the signed-in user can work it.
+    public var door: DoorNight? {
+        get { cover?.door }
+        set { cover = Facet(door: newValue) }
+    }
+
+    /// `cover { door }`.
+    private struct Facet: Codable, Sendable, Hashable {
+        var door: DoorNight?
+    }
 }
 
 /// What the door should do with a scanned pass. Unknown values from a newer API decode as ``unknown``.

@@ -165,19 +165,23 @@ try await client.setRSVP(.attending, forEvent: eventID) // mirrored to Facebook
 try await client.registerDevice(notificationToken: hexToken)
 ```
 
-`reportLocation` records where the member is and returns what's happening
-there. Select the fields you need and decode into your own type; pass a
-`decoder` when your models need their own date strategy:
+`reportLocation` records where the member is and says where that is: the
+`venue` they're in, else their `locale` and its `nearbyVenues`. Select the
+fields you need, including the module facets the screen reads (such as
+`venue { friends { list { name } } }` or `audience { ping { friendPings { id } } }`),
+and decode into your own type; pass a `decoder` when your models need their
+own date strategy:
 
 ```swift
-let document = Queries.reportLocation(selecting: "title venue { id name } venues { id name distance }")
+let document = Queries.reportLocation(selecting: "venue { id name } locale { id name } nearbyVenues { id name distance }")
 let now = try await client.graphQL(document, variables: ["position": here.graphQLValue],
                                    as: MyNowResponse.self, decoder: myDecoder)
 ```
 
 The API also serves `venue(id:)`, `event(id:)`, `person(id:)` and `locale(id:)`
 by UUID, `venues(near:)` nearest first with each `distance`, and each
-locale's and venue's upcoming `events`.
+locale's and venue's upcoming events
+(`events { upcoming { nodes { … } } }`: facets, whose lists are Relay connections).
 
 ## Cover
 
