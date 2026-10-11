@@ -4,15 +4,16 @@ import Foundation
 /// The GraphQL documents behind the client's typed helpers. Public so apps can reuse the fragments
 /// in their own operations and decode into the same models.
 public enum Queries {
-    public static let pageFields = "id name photoUrl coverImageUrl"
-    public static let localeFields = "id name label cityNames coverImageUrl googlePlaceId"
+    public static let pageFields = "id name photoUrl bannerUrl"
+    public static let localeFields = "id name label cityNames bannerUrl googlePlaceId"
     /// A tag on a venue, person or event: its name and chip color.
     public static let tagFields = "id name color"
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
     /// friends are there now.
     public static let personVenueFields = "id name photoUrl locale { id name } friends { id name facebookId presence }"
-    /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`.
-    public static let personEventFields = "id name startAt locale { id name } venue { \(personVenueFields) } tags { \(tagFields) }"
+    /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
+    /// `venue` is the events facet: a display name ("To be announced" when there is none) and the venue, if any.
+    public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
 
     public static let audience = """
     query Audience {
@@ -23,7 +24,7 @@ public enum Queries {
     public static let venues = """
     query Venues {
       venues {
-        id name hidden order photoUrl coverImageUrl
+        id name hidden order photoUrl bannerUrl
         page { \(pageFields) }
         locale { \(localeFields) }
         location { id point googlePlaceId address }
@@ -36,9 +37,9 @@ public enum Queries {
     query People {
       people {
         id name order global likeRequired page { \(pageFields) }
-        homeVenue { \(personVenueFields) }
+        venues { home { \(personVenueFields) } }
         locales { id name }
-        eventInvolvements { edges { relationship role via { id name } node { \(personEventFields) } } }
+        events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
         tags { \(tagFields) }
       }
     }
@@ -121,8 +122,10 @@ public enum Queries {
     query VenueCover($id: ID!) {
       venue(id: $id) {
         id name
-        coverCharge { \(coverChargeFields) }
-        viewerAdmission { \(admissionFields) }
+        cover {
+          charge { \(coverChargeFields) }
+          viewerAdmission { \(admissionFields) }
+        }
       }
     }
     """
@@ -135,13 +138,13 @@ public enum Queries {
 
     public static let doorVenues = """
     query DoorVenues {
-      doorVenues { id name photoUrl door { \(doorNightFields) } }
+      doorVenues { id name photoUrl cover { door { \(doorNightFields) } } }
     }
     """
 
     public static let venueDoor = """
     query VenueDoor($id: ID!, $night: ISO8601Date) {
-      venue(id: $id) { id name photoUrl door(night: $night) { \(doorNightFields) } }
+      venue(id: $id) { id name photoUrl cover { door(night: $night) { \(doorNightFields) } } }
     }
     """
 

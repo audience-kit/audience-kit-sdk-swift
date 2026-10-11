@@ -181,7 +181,8 @@ let now = try await client.graphQL(document, variables: ["position": here.graphQ
 
 The API also serves `venue(id:)`, `event(id:)`, `person(id:)` and `locale(id:)`
 by UUID, `venues(near:)` nearest first with each `distance`, and each
-locale's and venue's upcoming `events`.
+locale's and venue's upcoming events
+(`events { upcoming { nodes { … } } }`: facets, whose lists are Relay connections).
 
 ## Cover
 
