@@ -113,8 +113,7 @@ for venue in venues {
 ```
 
 Objects' `id` fields are the records' UUIDs, the same IDs the REST endpoints
-take. `node(id:)` takes a Relay global ID (base64 of `gid://…/Venue/<uuid>`);
-`GlobalID(id)?.modelID` decodes one back to its UUID.
+and `node(id:)` take; there is one ID per record everywhere.
 
 Run any other operation and decode it into your own type:
 

@@ -30,7 +30,7 @@ extension AudienceSession {
         try await graphQL(Queries.me, operationName: "Me", as: MeResponse.self).me
     }
 
-    /// Any object by its global ID, or `nil` when it doesn't exist or belongs to another audience.
+    /// Any record by its `id` (its UUID), or `nil` when it doesn't exist or belongs to another audience.
     public func node(id: String) async throws -> Node? {
         try await graphQL(Queries.node, variables: ["id": .string(id)], operationName: "Node",
                           as: NodeResponse.self).node

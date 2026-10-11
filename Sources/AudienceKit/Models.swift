@@ -238,7 +238,7 @@ public struct User: Codable, Sendable, Hashable, Identifiable {
     public var presence: Presence?
 }
 
-/// Anything with an ID, as `node(id:)` returns it.
+/// Any record, as `node(id:)` returns it: its UUID and its GraphQL type.
 public struct Node: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     /// The GraphQL type name, e.g. `Venue`.
@@ -247,31 +247,6 @@ public struct Node: Codable, Sendable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case typename = "__typename"
-    }
-}
-
-/// A Relay global ID, which the API builds from a Rails GlobalID: base64url of `gid://<app>/<Model>/<id>`.
-/// `node(id:)` takes these; objects' own `id` fields are their records' UUIDs.
-public struct GlobalID: Sendable, Hashable {
-    /// The model name, e.g. `Venue`.
-    public var modelName: String
-    /// The record's database ID, usually a UUID, as the REST endpoints take it.
-    public var modelID: String
-
-    /// Decodes a Relay global ID. Returns `nil` for IDs that aren't GlobalIDs.
-    public init?(_ id: String) {
-        var base64 = id.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-
-        guard let data = Data(base64Encoded: base64), let uri = String(data: data, encoding: .utf8),
-              uri.hasPrefix("gid://")
-        else { return nil }
-
-        let parts = uri.dropFirst("gid://".count).split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.count >= 3, !parts[1].isEmpty, !parts[2].isEmpty else { return nil }
-
-        modelName = String(parts[1])
-        modelID = String(parts[2].split(separator: "?").first ?? parts[2])
     }
 }
 
