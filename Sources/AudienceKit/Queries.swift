@@ -10,7 +10,7 @@ public enum Queries {
     public static let tagFields = "id name color"
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
     /// friends are there now.
-    public static let personVenueFields = "id name photoUrl locale { id name } friends { id name facebookId presence }"
+    public static let personVenueFields = "id name photoUrl locale { id name } friends { list { nodes { id name facebookId presence } } }"
     /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
     /// `venue` is the events facet: a display name ("To be announced" when there is none) and the venue, if any.
     public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
@@ -23,31 +23,43 @@ public enum Queries {
 
     public static let venues = """
     query Venues {
-      venues {
-        id name hidden order photoUrl bannerUrl
-        profile { facebook { page { \(pageFields) } } }
-        locale { \(localeFields) }
-        location { id point address places { placeId } }
-        tags { \(tagFields) }
+      audience {
+        venues {
+          list {
+            nodes {
+              id name hidden order photoUrl bannerUrl
+              profile { facebook { page { \(pageFields) } } }
+              locale { \(localeFields) }
+              location { id point address places { placeId } }
+              tags { \(tagFields) }
+            }
+          }
+        }
       }
     }
     """
 
     public static let people = """
     query People {
-      people {
-        id name order global likeRequired profile { facebook { page { \(pageFields) } } }
-        venues { home { \(personVenueFields) } }
-        locales { id name }
-        events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
-        tags { \(tagFields) }
+      audience {
+        people {
+          list {
+            nodes {
+              id name order global likeRequired profile { facebook { page { \(pageFields) } } }
+              venues { home { \(personVenueFields) } }
+              locales { id name }
+              events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
+              tags { \(tagFields) }
+            }
+          }
+        }
       }
     }
     """
 
     public static let locales = """
     query Locales {
-      locales { \(localeFields) }
+      audience { locales { \(localeFields) } }
     }
     """
 
@@ -120,11 +132,13 @@ public enum Queries {
 
     public static let venueCover = """
     query VenueCover($id: ID!) {
-      venue(id: $id) {
-        id name
-        cover {
-          charge { \(coverChargeFields) }
-          viewerAdmission { \(admissionFields) }
+      venues {
+        venue(id: $id) {
+          id name
+          cover {
+            charge { \(coverChargeFields) }
+            viewerAdmission { \(admissionFields) }
+          }
         }
       }
     }
@@ -132,19 +146,19 @@ public enum Queries {
 
     public static let admissions = """
     query Admissions {
-      admissions { \(admissionFields) }
+      cover { admissions { nodes { \(admissionFields) } } }
     }
     """
 
     public static let doorVenues = """
     query DoorVenues {
-      doorVenues { id name photoUrl cover { door { \(doorNightFields) } } }
+      cover { doorVenues { nodes { id name photoUrl cover { door { \(doorNightFields) } } } } }
     }
     """
 
     public static let venueDoor = """
     query VenueDoor($id: ID!, $night: ISO8601Date) {
-      venue(id: $id) { id name photoUrl cover { door(night: $night) { \(doorNightFields) } } }
+      venues { venue(id: $id) { id name photoUrl cover { door(night: $night) { \(doorNightFields) } } } }
     }
     """
 
@@ -193,9 +207,34 @@ public enum Queries {
 }
 
 struct AudienceResponse: Decodable, Sendable { var audience: Audience? }
-struct VenuesResponse: Decodable, Sendable { var venues: [Venue] }
-struct PeopleResponse: Decodable, Sendable { var people: [Person] }
-struct LocalesResponse: Decodable, Sendable { var locales: [AudienceLocale] }
+/// A connection read as `nodes { … }`: the facet lists (`venues { list }`, `cover { admissions }`) are connections.
+struct Nodes<Element: Decodable & Sendable>: Decodable, Sendable { var nodes: [Element] }
+
+/// `audience { venues { list { nodes } } }`.
+struct VenuesResponse: Decodable, Sendable {
+    struct Audience: Decodable, Sendable { var venues: Facet }
+    struct Facet: Decodable, Sendable { var list: Nodes<Venue> }
+
+    var audience: Audience?
+    var venues: [Venue] { audience?.venues.list.nodes ?? [] }
+}
+
+/// `audience { people { list { nodes } } }`.
+struct PeopleResponse: Decodable, Sendable {
+    struct Audience: Decodable, Sendable { var people: Facet }
+    struct Facet: Decodable, Sendable { var list: Nodes<Person> }
+
+    var audience: Audience?
+    var people: [Person] { audience?.people.list.nodes ?? [] }
+}
+
+/// `audience { locales }`.
+struct LocalesResponse: Decodable, Sendable {
+    struct Audience: Decodable, Sendable { var locales: [AudienceLocale] }
+
+    var audience: Audience?
+    var locales: [AudienceLocale] { audience?.locales ?? [] }
+}
 struct MeResponse: Decodable, Sendable { var me: User? }
 struct NodeResponse: Decodable, Sendable { var node: Node? }
 struct ClosestLocaleResponse: Decodable, Sendable { var closestLocale: AudienceLocale? }
@@ -217,10 +256,37 @@ struct RSVPEventResponse: Decodable, Sendable {
     struct Payload: Decodable, Sendable { var event: Event }
     var rsvpEvent: Payload
 }
-struct VenueCoverResponse: Decodable, Sendable { var venue: VenueCover? }
-struct AdmissionsResponse: Decodable, Sendable { var admissions: [Admission] }
-struct DoorVenuesResponse: Decodable, Sendable { var doorVenues: [DoorVenue] }
-struct VenueDoorResponse: Decodable, Sendable { var venue: DoorVenue? }
+/// `venues { venue(id:) }`.
+struct VenueCoverResponse: Decodable, Sendable {
+    struct Venues: Decodable, Sendable { var venue: VenueCover? }
+
+    var venues: Venues
+    var venue: VenueCover? { venues.venue }
+}
+
+/// `cover { admissions { nodes } }`.
+struct AdmissionsResponse: Decodable, Sendable {
+    struct Cover: Decodable, Sendable { var admissions: Nodes<Admission> }
+
+    var cover: Cover
+    var admissions: [Admission] { cover.admissions.nodes }
+}
+
+/// `cover { doorVenues { nodes } }`.
+struct DoorVenuesResponse: Decodable, Sendable {
+    struct Cover: Decodable, Sendable { var doorVenues: Nodes<DoorVenue> }
+
+    var cover: Cover
+    var doorVenues: [DoorVenue] { cover.doorVenues.nodes }
+}
+
+/// `venues { venue(id:) }`.
+struct VenueDoorResponse: Decodable, Sendable {
+    struct Venues: Decodable, Sendable { var venue: DoorVenue? }
+
+    var venues: Venues
+    var venue: DoorVenue? { venues.venue }
+}
 struct BuyCoverResponse: Decodable, Sendable { var buyCover: CoverPurchase }
 struct AdmissionPayload: Decodable, Sendable { var admission: Admission }
 struct ConfirmCoverResponse: Decodable, Sendable { var confirmCover: AdmissionPayload }

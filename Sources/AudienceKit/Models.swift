@@ -357,8 +357,40 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
     public var name: String?
     public var photoUrl: String?
     public var locale: AudienceLocale?
-    /// The signed-in user's friends who are there now.
+    /// The signed-in user's friends who have been there lately: the API's `friends { list }` facet. Nil when the
+    /// query didn't ask.
     public var friends: [Friend]?
+
+    public init(id: String, name: String? = nil, photoUrl: String? = nil, locale: AudienceLocale? = nil,
+                friends: [Friend]? = nil) {
+        self.id = id
+        self.name = name
+        self.photoUrl = photoUrl
+        self.locale = locale
+        self.friends = friends
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, photoUrl, locale, friends }
+    private struct FriendsFacet: Codable { var list: FriendList? }
+    private struct FriendList: Codable { var nodes: [Friend?]? }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        photoUrl = try container.decodeIfPresent(String.self, forKey: .photoUrl)
+        locale = try container.decodeIfPresent(AudienceLocale.self, forKey: .locale)
+        friends = try container.decodeIfPresent(FriendsFacet.self, forKey: .friends)?.list?.nodes?.compactMap { $0 }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(photoUrl, forKey: .photoUrl)
+        try container.encodeIfPresent(locale, forKey: .locale)
+        try container.encodeIfPresent(friends.map { FriendsFacet(list: FriendList(nodes: $0)) }, forKey: .friends)
+    }
 }
 
 /// One of a person's upcoming events.
