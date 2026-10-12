@@ -844,6 +844,8 @@ private func makeClient(
         #expect(payload.when == Date(timeIntervalSince1970: 1_791_316_800.5))
         #expect(payload.later == Date(timeIntervalSince1970: 1_791_316_800))
         #expect(ISO8601.string(from: payload.later) == "2026-10-06T20:00:00Z")
+        #expect(ISO8601.string(from: payload.when) == "2026-10-06T20:00:00.500Z")
+        #expect(ISO8601.date(from: ISO8601.string(from: payload.when)) == payload.when)
         #expect(ISO8601.date(from: "yesterday") == nil)
         #expect(String(decoding: try JSONEncoder.audienceKit.encode([payload.later]), as: UTF8.self)
             == #"["2026-10-06T20:00:00Z"]"#)

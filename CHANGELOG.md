@@ -22,6 +22,8 @@ Pairs with API version `2026-10-11`, which the SDK sends as `X-AudienceKit-API-V
 - The audience comes from the stored credential's `audienceId`, then the configured `audienceID`, then the host's
   branding. Nothing decodes the JWT's `audience_id` claim any more.
 - `Authorization: Bearer <token>` replaces `JWT <token>`.
+- `ISO8601.string(from:)` keeps a date's fraction of a second (`2026-10-06T20:00:00.500Z`) so timestamps the API
+  sends with milliseconds, such as `checkedInAt`, round-trip through `JSONEncoder.audienceKit`.
 
 ### Errors and enums (4.3)
 

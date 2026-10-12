@@ -10,9 +10,12 @@ public enum ISO8601 {
         return try? Date(string, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: fractional))
     }
 
-    /// Formats a date as the API would, in UTC without fractional seconds: `2026-10-06T20:00:00Z`.
+    /// Formats a date as the API would, in UTC: `2026-10-06T20:00:00Z`, or `2026-10-06T20:00:00.500Z` when the date
+    /// has a fraction of a second, so a parsed timestamp round-trips.
     public static func string(from date: Date) -> String {
-        date.formatted(Date.ISO8601FormatStyle())
+        let seconds = date.timeIntervalSinceReferenceDate
+        let fractional = (seconds - seconds.rounded(.down)).rounded(toPlaces: 3) != 0
+        return date.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: fractional))
     }
 
     /// Decodes a date from an ISO 8601 string, for `JSONDecoder.DateDecodingStrategy.custom`.
@@ -23,6 +26,13 @@ public enum ISO8601 {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(text) isn't an ISO 8601 date")
         }
         return date
+    }
+}
+
+private extension Double {
+    func rounded(toPlaces places: Int) -> Double {
+        let scale = pow(10.0, Double(places))
+        return (self * scale).rounded() / scale
     }
 }
 
