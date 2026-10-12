@@ -104,7 +104,7 @@ your app as well.
 let venues = try await client.venues()   // [Venue]: page name and photos, locale, location
 let people = try await client.people()   // [Person]
 let locales = try await client.locales() // [AudienceLocale]
-let me = try await client.me()           // User?
+let me = try await client.me()           // SelfUser?: me { self }, your own profile
 let audience = try await client.audience() // name, subdomain, theme tokens
 
 for venue in venues {
@@ -171,7 +171,7 @@ try await client.registerDevice(notificationToken: hexToken)
 `reportLocation` records where the member is and says where that is: the
 `venue` they're in, else their `locale` and its `nearbyVenues`. Select the
 fields you need, including the module mixins the screen reads (such as
-`venue { friends { list { name } } }` or `audience { ping { friendPings { id } } }`),
+`venue { friends { list { name } } }` or `audience { me { ping { friendPings { id } } } }`),
 and decode into your own type; pass a `decoder` when your models need their
 own date strategy:
 

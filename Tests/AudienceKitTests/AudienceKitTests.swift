@@ -230,12 +230,12 @@ private func makeClient(
     }
 
     @Test func staffToolsUseTheStaffEndpoint() async throws {
-        struct Me: Decodable, Sendable { let me: Person? ; struct Person: Decodable, Sendable { let id: String } }
-        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"me":{"id":"u-1"}}}"#) }
+        struct Me: Decodable, Sendable { let me: State? ; struct State: Decodable, Sendable { let termsAcceptedAt: String? } }
+        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"me":{"termsAcceptedAt":null}}}"#) }
         let (client, _) = makeClient(stub)
 
-        _ = try await client.graphQL("{ me { id } }", endpoint: .staff, as: Me.self)
-        _ = try await client.graphQL("{ me { id } }", as: Me.self)
+        _ = try await client.graphQL("{ me { termsAcceptedAt } }", endpoint: .staff, as: Me.self)
+        _ = try await client.graphQL("{ me { termsAcceptedAt } }", as: Me.self)
 
         #expect(stub.requests.map(\.path) == ["/v1/audience/\(audienceID)/staffql", "/v1/audience/\(audienceID)/graphql"])
         #expect(GraphQLEndpoint.allCases.map { $0.path(audienceID: "a") } == ["/v1/audience/a/graphql", "/v1/audience/a/staffql"])
@@ -277,8 +277,8 @@ private func makeClient(
                 """#)
             case "Me":
                 return .json(status: 200, body: #"""
-                {"data":{"me":{"id":"u-1","name":"Rick Mark","firstName":"Rick","lastName":"Mark",
-                  "emailAddress":null,"isAdmin":true,"presence":"PUSH"}}}
+                {"data":{"me":{"self":{"id":"u-1","name":"Rick Mark","firstName":"Rick","lastName":"Mark",
+                  "emailAddress":null,"isAdmin":true,"presence":"PUSH"}}}}
                 """#)
             default:
                 return .json(status: 200, body: #"""
@@ -614,8 +614,8 @@ private func makeClient(
             let operation = (try? request.jsonBody()["operationName"] as? String) ?? ""
             if operation == "DoorVenues" {
                 return .json(status: 200, body: #"""
-                {"data":{"cover":{"doorVenues":{"nodes":[{"id":"v-1","name":"The Stud","photoUrl":null,
-                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}}]}}}}
+                {"data":{"me":{"cover":{"doorVenues":{"nodes":[{"id":"v-1","name":"The Stud","photoUrl":null,
+                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}}]}}}}}
                 """#)
             }
             return .json(status: 200, body: #"""
