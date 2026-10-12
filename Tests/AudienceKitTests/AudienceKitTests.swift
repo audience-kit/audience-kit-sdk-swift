@@ -366,11 +366,37 @@ private func makeClient(
         do {
             _ = try await client.graphQL("{ nope }", as: [String: GraphQLValue].self)
             Issue.record("expected an error")
-        } catch let AudienceKitError.graphQL(errors) {
-            #expect(errors.first?.message == "Field 'nope' doesn't exist on type 'Query'")
-            #expect(errors.first?.path == ["query", "nope"])
-            #expect(errors.first?.extensions?["code"] == "undefinedField")
+        } catch let error as AudienceKitError {
+            // The code is whatever the API sent, known to the SDK or not.
+            #expect(error.code == "undefinedField")
+            #expect(error.message == "Field 'nope' doesn't exist on type 'Query'")
+            #expect(error.errors.first?.path == ["query", "nope"])
+            #expect(error.errors.first?.code == "undefinedField")
+            #expect(error.fields.isEmpty)
         }
+    }
+
+    @Test func carriesTheAPIsErrorCodeAndFields() async throws {
+        let stub = Stub { _ in
+            .json(status: 200, body: #"""
+            {"data":null,"errors":[{"message":"Name can't be blank","path":["updateVenue"],
+              "extensions":{"code":"INVALID","fields":{"name":["can't be blank"],"order":"must be a number"}}}]}
+            """#)
+        }
+        let (client, _) = makeClient(stub)
+
+        do {
+            _ = try await client.graphQL("mutation { updateVenue { id } }", as: [String: GraphQLValue].self)
+            Issue.record("expected an error")
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.invalid)
+            #expect(error.fields == ["name": ["can't be blank"], "order": ["must be a number"]])
+            #expect(error.errorDescription == "Name can't be blank")
+        }
+
+        let noCode = AudienceKitError.graphQL([GraphQLError(message: "Boom")])
+        #expect(noCode.code == AudienceKitError.Code.graphQL)
+        #expect(noCode.message == "Boom")
     }
 
     @Test func aRejectedSessionEndsIt() async throws {
@@ -383,6 +409,9 @@ private func makeClient(
         #expect(try store.loadToken() == nil)
         #expect(await client.isSignedIn == false)
         #expect(await events.next() == .sessionEnded)
+        #expect(AudienceKitError.unauthorized.code == AudienceKitError.Code.unauthenticated)
+        #expect(AudienceKitError.unauthorized.isUnauthenticated)
+        #expect(AudienceKitError.unauthorized.status == 401)
     }
 
     @Test func manyRejectedCallsEndTheSessionOnce() async throws {
@@ -483,8 +512,9 @@ private func makeClient(
         do {
             _ = try await client.venues()
             Issue.record("expected an error")
-        } catch let AudienceKitError.network(error) {
-            #expect(error.code == .notConnectedToInternet)
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.network)
+            #expect(error.underlying?.code == .notConnectedToInternet)
         }
     }
 
@@ -495,7 +525,9 @@ private func makeClient(
         do {
             _ = try await client.venues()
             Issue.record("expected an error")
-        } catch AudienceKitError.decoding {}
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.decoding)
+        }
     }
 }
 
@@ -787,7 +819,29 @@ private func makeClient(
     @Test func decodesPresenceLeniently() throws {
         let json = #"[{"id":"f-1","presence":"ONLINE"},{"id":"f-2","presence":"online"},{"id":"f-3","presence":"AWAY"},{"id":"f-4"}]"#
         let friends = try JSONDecoder().decode([Friend].self, from: Data(json.utf8))
-        #expect(friends.map(\.presence) == [.online, .online, .offline, nil])
+        #expect(friends.map(\.presence) == [.online, .online, .unknown("AWAY"), nil])
+        #expect(friends[2].presence?.isReachable == false)
+        #expect(Presence.known.contains(.offline))
+    }
+
+    @Test func keepsUnknownEnumValuesAndSendsThemBack() throws {
+        let states = try JSONDecoder().decode([RSVPState].self, from: Data(#"["ATTENDING","PLUS_ONE"]"#.utf8))
+        #expect(states == [.attending, .unknown("PLUS_ONE")])
+        #expect(states.map(\.rawValue) == ["ATTENDING", "PLUS_ONE"])
+        #expect(String(decoding: try JSONEncoder().encode(states), as: UTF8.self) == #"["ATTENDING","PLUS_ONE"]"#)
+        #expect(!RSVPState.known.contains(.unknown("PLUS_ONE")))
+
+        let relationship = try JSONDecoder().decode([PersonEventInvolvement.Relationship].self,
+                                                    from: Data(#"["troupe","GUEST"]"#.utf8))
+        #expect(relationship == [.troupe, .unknown("GUEST")])
+
+        let providers = try JSONDecoder().decode([PaymentProvider].self, from: Data(#"["SQUARE","ADYEN"]"#.utf8))
+        #expect(providers == [.square, .unknown("ADYEN")])
+
+        #expect(AudienceKitEnvironment(rawValue: "staging") == .staging)
+        #expect(AudienceKitEnvironment(rawValue: "preview") == .unknown("preview"))
+        #expect(AudienceKitEnvironment.unknown("preview").rawValue == "preview")
+        #expect(AudienceKitEnvironment.known == [.production, .staging])
     }
 
     @Test func parsesHexColors() {

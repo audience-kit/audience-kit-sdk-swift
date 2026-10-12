@@ -319,15 +319,40 @@ struct NodeList<Item: Decodable>: Decodable {
 
 /// How a person is on one of their upcoming events: themselves, or through a troupe they're in.
 public struct PersonEventInvolvement: Codable, Sendable, Hashable, Identifiable {
-    public enum Relationship: String, Codable, Sendable, Hashable, CaseIterable {
+    /// GraphQL's `PersonEventRelationship`. A value this SDK doesn't know decodes as ``unknown(_:)``.
+    public enum Relationship: Sendable, Hashable, RawRepresentable, Codable {
         /// They host or play it themselves.
-        case direct = "DIRECT"
+        case direct
         /// A troupe they're in hosts or plays it.
-        case troupe = "TROUPE"
+        case troupe
+        case unknown(String)
 
-        public init(from decoder: Decoder) throws {
-            let raw = try decoder.singleValueContainer().decode(String.self)
-            self = Relationship(rawValue: raw.uppercased()) ?? .direct
+        /// The relationships this SDK knows.
+        public static let known: [Relationship] = [.direct, .troupe]
+
+        public init(rawValue: String) {
+            switch rawValue.uppercased() {
+            case "DIRECT": self = .direct
+            case "TROUPE": self = .troupe
+            default: self = .unknown(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .direct: "DIRECT"
+            case .troupe: "TROUPE"
+            case let .unknown(value): value
+            }
+        }
+
+        public init(from decoder: any Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
         }
     }
 
@@ -509,30 +534,94 @@ public struct Coordinates: Sendable, Hashable {
     }
 }
 
-/// Whether the signed-in user is going to an event.
-public enum RSVPState: String, Codable, Sendable, Hashable, CaseIterable {
-    case attending = "ATTENDING"
-    case maybe = "MAYBE"
-    case declined = "DECLINED"
-    case unsure = "UNSURE"
+/// Whether the signed-in user is going to an event: GraphQL's `RSVPState`. A value this SDK doesn't know decodes as
+/// ``unknown(_:)``, and is sent back as is.
+public enum RSVPState: Sendable, Hashable, RawRepresentable, Codable {
+    case attending
+    case maybe
+    case declined
+    case unsure
+    case unknown(String)
+
+    /// The states this SDK knows.
+    public static let known: [RSVPState] = [.attending, .maybe, .declined, .unsure]
+
+    public init(rawValue: String) {
+        switch rawValue.uppercased() {
+        case "ATTENDING": self = .attending
+        case "MAYBE": self = .maybe
+        case "DECLINED": self = .declined
+        case "UNSURE": self = .unsure
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .attending: "ATTENDING"
+        case .maybe: "MAYBE"
+        case .declined: "DECLINED"
+        case .unsure: "UNSURE"
+        case let .unknown(value): value
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 /// Whether someone can be reached right now: GraphQL's `Presence` on users, friends and chat messages.
 /// The API shows the real value only to the person, their friends and admins; everyone else gets `offline`.
 ///
 /// Decoding is case-insensitive, so it also reads the chat room's `presence` frames
-/// (`{"type":"presence","user_id":"…","presence":"online"}`), and an unknown value decodes as `offline`.
-public enum Presence: String, Codable, Sendable, Hashable, CaseIterable {
+/// (`{"type":"presence","user_id":"…","presence":"online"}`). A value this SDK doesn't know decodes as
+/// ``unknown(_:)``; treat it as not reachable.
+public enum Presence: Sendable, Hashable, RawRepresentable, Codable {
     /// Connected to a chat room now.
-    case online = "ONLINE"
+    case online
     /// Not in chat, but signed in on a device that gets push notifications.
-    case push = "PUSH"
+    case push
     /// Neither, or not for this viewer to see.
-    case offline = "OFFLINE"
+    case offline
+    case unknown(String)
 
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Presence(rawValue: raw.uppercased()) ?? .offline
+    /// The presences this SDK knows.
+    public static let known: [Presence] = [.online, .push, .offline]
+
+    public init(rawValue: String) {
+        switch rawValue.uppercased() {
+        case "ONLINE": self = .online
+        case "PUSH": self = .push
+        case "OFFLINE": self = .offline
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .online: "ONLINE"
+        case .push: "PUSH"
+        case .offline: "OFFLINE"
+        case let .unknown(value): value
+        }
+    }
+
+    /// Whether they can be reached at all: in chat or by push.
+    public var isReachable: Bool { self == .online || self == .push }
+
+    public init(from decoder: any Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -613,13 +702,51 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
     public var event: CoverEvent?
 }
 
+/// Who takes a venue's cover payments: GraphQL's `PaymentProvider`. A value this SDK doesn't know decodes as
+/// ``unknown(_:)``; the app can't pay it and should say so.
+public enum PaymentProvider: Sendable, Hashable, RawRepresentable, Codable {
+    /// Stripe Connect: pay with Stripe's payment sheet.
+    case stripe
+    /// Square: pay with Square's In-App Payments SDK.
+    case square
+    case unknown(String)
+
+    /// The providers this SDK knows.
+    public static let known: [PaymentProvider] = [.stripe, .square]
+
+    public init(rawValue: String) {
+        switch rawValue.uppercased() {
+        case "STRIPE": self = .stripe
+        case "SQUARE": self = .square
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .stripe: "STRIPE"
+        case .square: "SQUARE"
+        case let .unknown(value): value
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 /// What ``AudienceKitClient/buyCover(venueID:)`` returns: the pending pass and what the venue's payment provider
 /// needs. Stripe venues pay with Stripe's payment sheet; Square venues with Square's In-App Payments SDK.
 public struct CoverPurchase: Codable, Sendable, Hashable {
     /// The pass, pending until the payment succeeds.
     public var admission: Admission
-    /// `STRIPE` or `SQUARE`.
-    public var provider: String
+    /// Who takes the payment.
+    public var provider: PaymentProvider
     /// Stripe: for the payment sheet; `nil` once it's paid.
     public var paymentIntentClientSecret: String?
     /// Stripe: the audience's publishable key.
@@ -631,7 +758,7 @@ public struct CoverPurchase: Codable, Sendable, Hashable {
     /// Square: the venue's location that gets paid.
     public var squareLocationId: String?
 
-    public var isSquare: Bool { provider == "SQUARE" }
+    public var isSquare: Bool { provider == .square }
 }
 
 /// A venue's cover tonight and the signed-in user's pass for it.

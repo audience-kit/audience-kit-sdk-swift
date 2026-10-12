@@ -175,7 +175,7 @@ public actor AudienceSession {
         do {
             try tokenStore.saveToken(result.token)
         } catch {
-            throw AudienceKitError.tokenStorage(String(describing: error))
+            throw AudienceKitError.storage(String(describing: error))
         }
         resolvedAudienceID = nil
         sessionContinuation.yield(.signedIn)

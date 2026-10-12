@@ -4,12 +4,43 @@ import Foundation
 /// with the audience's staging Facebook app; the client says so with the
 /// `X-AudienceKit-Environment: staging` header. Development builds run against a local API, which
 /// uses its own Facebook app, so they stay ``production``.
-public enum AudienceKitEnvironment: String, Sendable, Hashable, CaseIterable {
+///
+/// A value the SDK doesn't know (one a newer API or app defines) is kept as ``unknown(_:)`` and sent as is.
+public enum AudienceKitEnvironment: Sendable, Hashable, RawRepresentable, Codable {
     case production
     case staging
+    case unknown(String)
+
+    /// The environments this SDK knows.
+    public static let known: [AudienceKitEnvironment] = [.production, .staging]
 
     /// The header that carries the environment. Production builds leave it out.
     public static let headerName = "X-AudienceKit-Environment"
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "production": self = .production
+        case "staging": self = .staging
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .production: "production"
+        case .staging: "staging"
+        case let .unknown(value): value
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 /// Where the SDK talks to and which audience it speaks for.
