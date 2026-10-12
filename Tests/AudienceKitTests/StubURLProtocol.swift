@@ -119,15 +119,3 @@ final class StubURLProtocol: URLProtocol {
         return data
     }
 }
-
-/// Builds an unsigned JWT with the given claims; the SDK only reads claims.
-func makeJWT(_ claims: [String: Any]) -> String {
-    func encode(_ object: [String: Any]) -> String {
-        let data = try! JSONSerialization.data(withJSONObject: object)
-        return data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-    return "\(encode(["alg": "HS256", "typ": "JWT"])).\(encode(claims)).signature"
-}

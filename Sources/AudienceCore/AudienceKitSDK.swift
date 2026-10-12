@@ -7,7 +7,13 @@ import Foundation
 /// audience's data over GraphQL.
 public enum AudienceKitSDK {
     /// The SDK's semantic version.
-    public static let version = "0.18.0"
+    public static let version = "0.19.0"
+
+    /// The API contract this SDK speaks, the date it was last broken: sent as `X-AudienceKit-API-Version` on every
+    /// request and kept on each ``Credential``.
+    public static let apiVersion = "2026-10-11"
+    /// The request header that carries ``apiVersion``.
+    public static let apiVersionHeaderName = "X-AudienceKit-API-Version"
 
     /// Whether this SDK is older than `minimum`, a dotted version like "0.3.0". Missing parts count as zero.
     public static func isOlder(than minimum: String, version: String = version) -> Bool {

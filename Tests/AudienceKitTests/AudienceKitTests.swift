@@ -11,17 +11,53 @@ import FoundationNetworking
 private let audienceID = "00000000-0000-4000-8000-000000000001"
 private let device = DeviceDescription(identifier: "device-1", model: "iPhone17,1", version: "2.0", build: "42")
 
+/// The API the request went to: its scheme and host, which is what a credential's endpoint names.
+private func apiBase(of request: RecordedRequest) -> URL {
+    URL(string: "\(request.url.scheme ?? "https")://\(request.url.host ?? "")")!
+}
+
+/// The URL of an audience's GraphQL endpoint on an API, as a credential names it.
+private func endpointURL(on baseURL: URL, audienceId: String?, endpoint: GraphQLEndpoint = .consumer) -> URL {
+    let path = audienceId.map { endpoint.path(audienceID: $0) } ?? "/v1/tenants/graphql"
+    return URL(string: path, relativeTo: baseURL)!.absoluteURL
+}
+
+/// A credential as `POST /v1/token` would issue it for the API at `baseURL`, for the audience's consumer endpoint.
+private func makeCredential(
+    baseURL: URL,
+    token: String = "session-token",
+    audienceId: String? = audienceID,
+    endpoint: GraphQLEndpoint = .consumer,
+    role: String = "member"
+) -> Credential {
+    Credential(token: token, userId: "u-1", audienceId: audienceId, role: role,
+               endpoint: endpointURL(on: baseURL, audienceId: audienceId, endpoint: endpoint))
+}
+
+/// The JSON `POST /v1/token` answers `request` with, for a session on the same API.
+private func tokenJSON(_ request: RecordedRequest, token: String, userId: String = "u-1",
+                       audienceId: String? = audienceID) -> String
+{
+    let audience = audienceId.map { "\"\($0)\"" } ?? "null"
+    let endpoint = endpointURL(on: apiBase(of: request), audienceId: audienceId).absoluteString
+    return #"{"token":"\#(token)","userId":"\#(userId)","audienceId":\#(audience),"role":"member","#
+        + #""endpoint":"\#(endpoint)","venueDeviceId":null,"expiresAt":null}"#
+}
+
 private func makeClient(
     _ stub: Stub,
     host: String? = "hotmess.admin.audiencekit.com",
     audienceID: String? = audienceID,
     token: String? = "session-token",
+    credentialAudienceID: String? = audienceID,
     environment: AudienceKitEnvironment = .production
-) -> (AudienceKitClient, InMemoryTokenStore) {
-    let store = InMemoryTokenStore(token: token)
+) -> (AudienceKitClient, InMemoryCredentialStore) {
+    let store = InMemoryCredentialStore(credential: token.map {
+        makeCredential(baseURL: stub.baseURL, token: $0, audienceId: credentialAudienceID)
+    })
     let configuration = AudienceKitConfiguration(baseURL: stub.baseURL, host: host, audienceID: audienceID,
                                                  facebookAppID: "100000000000001", environment: environment)
-    return (AudienceKitClient(configuration: configuration, tokenStore: store, session: stub.session), store)
+    return (AudienceKitClient(configuration: configuration, credentialStore: store, session: stub.session), store)
 }
 
 @Test func versionIsSet() {
@@ -37,18 +73,21 @@ private func makeClient(
 }
 
 @Suite struct SignIn {
-    @Test func exchangesTheFacebookTokenAndStoresTheSession() async throws {
-        let stub = Stub { _ in
-            .json(status: 200, body: #"{"token":"jwt-1","access_token":"jwt-1","user":{"id":"u-1","name":"Rick"}}"#)
-        }
+    @Test func exchangesTheFacebookTokenAndStoresTheCredential() async throws {
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, store) = makeClient(stub, token: nil)
         var events = client.sessionEvents.makeAsyncIterator()
 
         let result = try await client.signIn(facebookAccessToken: "fb-token", device: device)
 
-        #expect(result.token == "jwt-1")
-        #expect(result.user == .init(id: "u-1", name: "Rick"))
-        #expect(try store.loadToken() == "jwt-1")
+        #expect(result.credential.token == "jwt-1")
+        #expect(result.userId == "u-1")
+        #expect(result.credential.audienceId == audienceID)
+        #expect(result.credential.role == "member")
+        #expect(result.credential.endpoint.path == "/v1/audience/\(audienceID)/graphql")
+        #expect(result.credential.apiVersion == AudienceKitSDK.apiVersion)
+        #expect(try store.load() == result.credential)
+        #expect(try await client.credential() == result.credential)
         #expect(await client.isSignedIn)
         #expect(await events.next() == .signedIn)
 
@@ -58,6 +97,8 @@ private func makeClient(
         #expect(request.header("Authorization") == nil)
         #expect(request.header("Content-Type") == "application/json")
         #expect(request.header("X-AudienceKit-Environment") == nil)
+        #expect(request.header("X-AudienceKit-API-Version") == "2026-10-11")
+        #expect(request.header("X-AudienceKit-API-Version") == AudienceKitSDK.apiVersion)
 
         let body = try request.jsonBody()
         #expect(body["facebook_token"] as? String == "fb-token")
@@ -70,9 +111,7 @@ private func makeClient(
     }
 
     @Test func stagingBuildsSayTheyAreStaging() async throws {
-        let stub = Stub { _ in
-            .json(status: 200, body: #"{"token":"jwt-1","access_token":"jwt-1","user":{"id":"u-1","name":"Rick"}}"#)
-        }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, _) = makeClient(stub, token: nil, environment: .staging)
 
         _ = try await client.signIn(facebookAccessToken: "fb-token", device: device)
@@ -81,7 +120,7 @@ private func makeClient(
     }
 
     @Test func leavesOutTheHostWhenNoneIsConfigured() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-1","user":{"id":"u-1","name":null}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, _) = makeClient(stub, host: nil, token: nil)
 
         try await client.signIn(facebookAccessToken: "fb-token", device: device)
@@ -91,7 +130,7 @@ private func makeClient(
     }
 
     @Test func exchangesAnOAuthCode() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-2","user":{"id":"u-1","name":"Rick"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-2")) }
         let (client, store) = makeClient(stub, token: nil)
 
         try await client.signIn(facebookCode: "code-1", redirectURI: "fb123://authorize/", device: device)
@@ -101,18 +140,18 @@ private func makeClient(
         #expect(body["redirect_uri"] as? String == "fb123://authorize/")
         #expect(body["facebook_token"] == nil)
         #expect(body["host"] as? String == "hotmess.admin.audiencekit.com")
-        #expect(try store.loadToken() == "jwt-2")
+        #expect(try store.load()?.token == "jwt-2")
     }
 
     @Test func signsInWithApple() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-3","user":{"id":"u-2","name":"Ada Byron"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-3", userId: "u-2")) }
         let (client, store) = makeClient(stub, token: nil)
 
         let result = try await client.signIn(appleIdentityToken: "apple-jwt", firstName: "Ada", lastName: "Byron",
                                              device: device)
 
-        #expect(result.user == .init(id: "u-2", name: "Ada Byron"))
-        #expect(try store.loadToken() == "jwt-3")
+        #expect(result.userId == "u-2")
+        #expect(try store.load()?.token == "jwt-3")
         let request = try #require(stub.requests.first)
         #expect(request.path == "/v1/token/apple")
         #expect(request.header("Authorization") == nil)
@@ -124,18 +163,19 @@ private func makeClient(
     }
 
     @Test func connectsFacebookToTheSignedInAccount() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-4","user":{"id":"u-2","name":"Ada Byron"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-4", userId: "u-2")) }
         let (client, store) = makeClient(stub, token: "jwt-3")
 
         try await client.connectFacebook(code: "code-1", redirectURI: "fb123://authorize/", device: device)
 
         let request = try #require(stub.requests.first)
         #expect(request.path == "/v1/token")
-        #expect(request.header("Authorization") == "JWT jwt-3")
+        #expect(request.header("Authorization") == "Bearer jwt-3")
         let body = try request.jsonBody()
         #expect(body["connect"] as? Bool == true)
         #expect(body["code"] as? String == "code-1")
-        #expect(try store.loadToken() == "jwt-4")
+        #expect(try store.load()?.token == "jwt-4")
+        #expect(try store.load()?.userId == "u-2")
     }
 
     @Test func aRejectedFacebookTokenIsNotASessionEnding() async throws {
@@ -145,7 +185,7 @@ private func makeClient(
         await #expect(throws: AudienceKitError.signInRejected) {
             try await client.signIn(facebookAccessToken: "bad", device: device)
         }
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
     }
 
     @Test func surfacesTheFaultMessage() async throws {
@@ -157,15 +197,128 @@ private func makeClient(
         }
     }
 
-    @Test func signOutForgetsTheToken() async throws {
-        let stub = Stub { _ in .json(status: 200, body: "{}") }
+    @Test func surfacesTheRESTErrorMessage() async throws {
+        let stub = Stub { _ in .json(status: 400, body: #"{"error":"invalid","message":"Facebook token invalid"}"#) }
+        let (client, _) = makeClient(stub, token: nil)
+
+        await #expect(throws: AudienceKitError.signInFailed(message: "Facebook token invalid")) {
+            try await client.signIn(facebookAccessToken: "bad", device: device)
+        }
+    }
+
+    @Test func anUnsupportedAPIVersionIsNotASignInFailure() async throws {
+        let stub = Stub { _ in
+            .json(status: 400, body: #"{"error":"unsupported_api_version","supported":["2027-01-01"]}"#)
+        }
+        let (client, _) = makeClient(stub, token: nil)
+
+        do {
+            try await client.signIn(facebookAccessToken: "fb", device: device)
+            Issue.record("expected an error")
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.unsupportedAPIVersion)
+            #expect(error.status == 400)
+            #expect(error.message.contains("2027-01-01"))
+        }
+    }
+
+    @Test func signOutForgetsTheCredentialAndRevokesTheToken() async throws {
+        let stub = Stub { _ in .json(status: 204, body: "") }
         let (client, store) = makeClient(stub)
         var events = client.sessionEvents.makeAsyncIterator()
 
-        await client.signOut()
+        try await client.signOut()
 
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
+        #expect(await client.isSignedIn == false)
         #expect(await events.next() == .signedOut)
+        let request = try #require(stub.requests.first)
+        #expect(request.method == "DELETE")
+        #expect(request.path == "/v1/token")
+        #expect(request.header("Authorization") == "Bearer session-token")
+    }
+
+    @Test func signOutIsLocalFirstAndReportsARevocationThatFailed() async throws {
+        let stub = Stub { _ in .failure(URLError(.notConnectedToInternet)) }
+        let (client, store) = makeClient(stub)
+        var events = client.sessionEvents.makeAsyncIterator()
+
+        do {
+            try await client.signOut()
+            Issue.record("expected an error")
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.network)
+        }
+
+        // Offline or not, the device is signed out; the token may still be alive on the server.
+        #expect(try store.load() == nil)
+        #expect(await events.next() == .signedOut)
+    }
+
+    @Test func signOutOfAnAlreadyEndedSessionIsFine() async throws {
+        let stub = Stub { _ in .json(status: 401, body: "{}") }
+        let (client, _) = makeClient(stub)
+
+        try await client.signOut()
+        // Nothing stored: nothing to revoke, but the app still hears it.
+        var events = client.sessionEvents.makeAsyncIterator()
+        try await client.signOut()
+        #expect(await events.next() == .signedOut)
+        #expect(stub.requests.count == 1)
+    }
+
+    @Test func everySubscriberHearsSessionEvents() async throws {
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
+        let (client, _) = makeClient(stub, token: nil)
+        var first = client.sessionEvents.makeAsyncIterator()
+        var second = client.sessionEvents.makeAsyncIterator()
+
+        try await client.signIn(facebookAccessToken: "fb-token", device: device)
+
+        #expect(await first.next() == .signedIn)
+        #expect(await second.next() == .signedIn)
+    }
+
+    @Test func adoptsACredentialMintedElsewhere() async throws {
+        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#) }
+        // The credential names another API instance, which is where the SDK then talks to.
+        let other = Stub { _ in .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#) }
+        let (client, store) = makeClient(stub, token: nil)
+        var events = client.sessionEvents.makeAsyncIterator()
+        let credential = makeCredential(baseURL: other.baseURL, token: "device-token", audienceId: "a-2",
+                                        endpoint: .staff, role: "venue_device")
+
+        try await client.adopt(credential: credential)
+        _ = try await client.venues()
+
+        #expect(try store.load() == credential)
+        #expect(await events.next() == .signedIn)
+        #expect(stub.requests.isEmpty)
+        let request = try #require(other.requests.first)
+        #expect(request.path == "/v1/audience/a-2/graphql")
+        #expect(request.header("Authorization") == "Bearer device-token")
+    }
+
+    @Test func switchesAudiences() async throws {
+        let stub = Stub { request in
+            if request.path == "/v1/admin/choices" {
+                return .json(status: 200, body: tokenJSON(request, token: "jwt-a2", audienceId: "a-2"))
+            }
+            return .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#)
+        }
+        let (client, store) = makeClient(stub, audienceID: nil, credentialAudienceID: nil)
+
+        let credential = try await client.switchAudience(to: "a-2")
+        _ = try await client.venues()
+
+        #expect(credential.audienceId == "a-2")
+        #expect(try store.load()?.token == "jwt-a2")
+        let choice = try #require(stub.requests.first)
+        #expect(choice.method == "POST")
+        #expect(choice.header("Authorization") == "Bearer session-token")
+        #expect(try choice.jsonBody()["audience_id"] as? String == "a-2")
+        #expect(stub.requests.last?.path == "/v1/audience/a-2/graphql")
+        #expect(stub.requests.last?.header("Authorization") == "Bearer jwt-a2")
     }
 }
 
@@ -196,7 +349,8 @@ private func makeClient(
         let request = try #require(stub.requests.first)
         #expect(request.method == "POST")
         #expect(request.path == "/v1/audience/\(audienceID)/graphql")
-        #expect(request.header("Authorization") == "JWT session-token")
+        #expect(request.header("Authorization") == "Bearer session-token")
+        #expect(request.header("X-AudienceKit-API-Version") == AudienceKitSDK.apiVersion)
 
         let body = try request.jsonBody()
         #expect(body["operationName"] as? String == "Venues")
@@ -306,7 +460,7 @@ private func makeClient(
         #expect(people.last?.events?.first?.venue?.id == "v-1")
         #expect(people.last?.events?.last?.venue == nil)
         #expect(people.last?.events?.last?.venueName == "To be announced")
-        #expect(people.last?.events?.first?.startDate == Date(timeIntervalSince1970: 1_791_604_800))
+        #expect(people.last?.events?.first?.startAt == Date(timeIntervalSince1970: 1_791_604_800))
         // Their events include their troupes', and each says how they're on it.
         #expect(people.last?.events?.map(\.id) == ["e-1", "e-2"])
         #expect(people.last?.eventInvolvements?.map(\.relationship) == [.troupe, .direct])
@@ -324,6 +478,41 @@ private func makeClient(
         let audience = try await client.audience()
         #expect(audience.subdomain == "hotmess")
         #expect(audience.theme?.light == [ThemeToken(name: "accent", value: "#9c1c62")])
+    }
+
+    @Test func buildsModelsByHandAndRoundTripsThem() throws {
+        // Every model has a public memberwise initializer, so apps and previews can make one without JSON.
+        let locale = AudienceLocale(id: "l-1", name: "Seattle", label: "SEA", googlePlaceId: "ChIJ-sea")
+        let venue = Venue(id: "v-1", name: nil, hidden: false, order: 1, page: Page(id: "p-1", name: "Pony"),
+                          locale: locale, location: Location(id: "loc-1", coordinate: Coordinate(latitude: 47.6, longitude: -122.3)),
+                          tags: [Tag(id: "t-1", name: "Leather")])
+        #expect(venue.name == "Pony")
+        #expect(venue.location?.coordinate == Coordinate(latitude: 47.6, longitude: -122.3))
+        #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(venue)) == venue)
+
+        let event = PersonEvent(id: "e-1", name: "Bingo", startAt: Date(timeIntervalSince1970: 1_791_604_800),
+                                venueName: "To be announced")
+        let person = Person(id: "pe-1", name: "DJ Nobody", page: nil,
+                            homeVenue: PersonVenue(id: "v-1", name: "Pony", locale: locale),
+                            events: [event], eventInvolvements: [PersonEventInvolvement(event: event, role: "host")])
+        #expect(person.name == "DJ Nobody")
+        #expect(person.events?.first?.venue == nil)
+        #expect(person.events?.first?.venueName == "To be announced")
+        #expect(try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(person)) == person)
+
+        let usd = { (cents: Int) in Money(cents: cents, currency: "usd") }
+        let admission = Admission(id: "ad-1", status: .paid, night: "2026-10-09", amount: usd(1000), total: usd(1112),
+                                  profile: Profile(id: "u-1", name: "Rick M."),
+                                  venue: CoverVenue(id: "v-1", name: "Pony"))
+        let cover = VenueCover(id: "v-1", name: "Pony",
+                               coverCharge: CoverCharge(amount: usd(1000), fee: usd(112), total: usd(1112),
+                                                        night: "2026-10-09", payable: true),
+                               viewerAdmission: admission)
+        #expect(cover.viewerAdmission?.status == .paid)
+        #expect(cover.coverCharge?.total == Money(cents: 1112, currency: "usd"))
+        #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
+        #expect(DoorVenue(id: "v-1", door: DoorNight(night: "2026-10-09", paidCount: 1, checkedInCount: 0,
+                                                       gross: usd(1000))).door?.paidCount == 1)
     }
 
     @Test func decodesAPersonsPlainEventsAndRoundTripsTheirInvolvements() throws {
@@ -364,13 +553,41 @@ private func makeClient(
         let (client, _) = makeClient(stub)
 
         do {
-            _ = try await client.graphQL("{ nope }", as: [String: GraphQLValue].self)
+            // The document is a real one; what's under test is how the stub's answer comes back.
+            _ = try await client.graphQL("{ id }", as: [String: GraphQLValue].self)
             Issue.record("expected an error")
-        } catch let AudienceKitError.graphQL(errors) {
-            #expect(errors.first?.message == "Field 'nope' doesn't exist on type 'Query'")
-            #expect(errors.first?.path == ["query", "nope"])
-            #expect(errors.first?.extensions?["code"] == "undefinedField")
+        } catch let error as AudienceKitError {
+            // The code is whatever the API sent, known to the SDK or not.
+            #expect(error.code == "undefinedField")
+            #expect(error.message == "Field 'nope' doesn't exist on type 'Query'")
+            #expect(error.errors.first?.path == ["query", "nope"])
+            #expect(error.errors.first?.code == "undefinedField")
+            #expect(error.fields.isEmpty)
         }
+    }
+
+    @Test func carriesTheAPIsErrorCodeAndFields() async throws {
+        let stub = Stub { _ in
+            .json(status: 200, body: #"""
+            {"data":null,"errors":[{"message":"Name can't be blank","path":["rsvpEvent"],
+              "extensions":{"code":"INVALID","fields":{"name":["can't be blank"],"order":"must be a number"}}}]}
+            """#)
+        }
+        let (client, _) = makeClient(stub)
+
+        do {
+            let document = "mutation { rsvpEvent(input: { eventId: \"e-1\", state: ATTENDING }) { event { id } } }"
+            _ = try await client.graphQL(document, as: [String: GraphQLValue].self)
+            Issue.record("expected an error")
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.invalid)
+            #expect(error.fields == ["name": ["can't be blank"], "order": ["must be a number"]])
+            #expect(error.errorDescription == "Name can't be blank")
+        }
+
+        let noCode = AudienceKitError.graphQL([GraphQLError(message: "Boom")])
+        #expect(noCode.code == AudienceKitError.Code.graphQL)
+        #expect(noCode.message == "Boom")
     }
 
     @Test func aRejectedSessionEndsIt() async throws {
@@ -380,41 +597,46 @@ private func makeClient(
 
         await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
 
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
         #expect(await client.isSignedIn == false)
         #expect(await events.next() == .sessionEnded)
+        #expect(AudienceKitError.unauthorized.code == AudienceKitError.Code.unauthenticated)
+        #expect(AudienceKitError.unauthorized.isUnauthenticated)
+        #expect(AudienceKitError.unauthorized.status == 401)
     }
 
     @Test func manyRejectedCallsEndTheSessionOnce() async throws {
         let stub = Stub { _ in .json(status: 401, body: "{}") }
         let (client, _) = makeClient(stub)
 
+        var events = client.sessionEvents.makeAsyncIterator()
+
         await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
         // Signed out now, so later calls don't reach the API at all.
         await #expect(throws: AudienceKitError.notSignedIn) { try await client.people() }
         #expect(await client.sessionRejected(token: "session-token") == false)
-        await client.signOut()
+        try await client.signOut()
 
-        var events = client.sessionEvents.makeAsyncIterator()
         #expect(await events.next() == .sessionEnded)
         #expect(await events.next() == .signedOut)
         #expect(stub.requests.count == 1)
     }
 
     @Test func aRefusalOfAnOlderTokenKeepsANewerSession() async throws {
-        let store = InMemoryTokenStore(token: "session-token")
-        let stub = Stub { _ in
+        let store = InMemoryCredentialStore()
+        let stub = Stub { request in
             // The person signed in again while the old token's call was in flight.
-            _ = try? store.saveToken("newer-token")
+            _ = try? store.save(makeCredential(baseURL: apiBase(of: request), token: "newer-token"))
             return .json(status: 401, body: "{}")
         }
+        try store.save(makeCredential(baseURL: stub.baseURL, token: "session-token"))
         let configuration = AudienceKitConfiguration(baseURL: stub.baseURL, audienceID: audienceID)
-        let client = AudienceKitClient(configuration: configuration, tokenStore: store, session: stub.session)
+        let client = AudienceKitClient(configuration: configuration, credentialStore: store, session: stub.session)
 
         await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
 
-        #expect(try store.loadToken() == "newer-token")
-        #expect(stub.requests.first?.header("Authorization") == "JWT session-token")
+        #expect(try store.load()?.token == "newer-token")
+        #expect(stub.requests.first?.header("Authorization") == "Bearer session-token")
     }
 
     @Test func aSocketTheServerRefusedEndsTheSession() async throws {
@@ -423,10 +645,10 @@ private func makeClient(
         var events = client.sessionEvents.makeAsyncIterator()
 
         #expect(await client.sessionRejected(token: "someone-elses-token") == false)
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
 
         #expect(await client.sessionRejected(token: "session-token"))
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
         #expect(await events.next() == .sessionEnded)
     }
 
@@ -435,7 +657,7 @@ private func makeClient(
         let (client, store) = makeClient(stub)
 
         await #expect(throws: AudienceKitError.forbidden) { try await client.venues() }
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
     }
 
     @Test func anOutdatedSDKIsToldToUpdate() async throws {
@@ -447,7 +669,7 @@ private func makeClient(
         await #expect(throws: AudienceKitError.updateRequired(minimumSDKVersion: "0.3.0", message: "This version of the app is out of date.")) {
             try await client.venues()
         }
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
         #expect(stub.requests.last?.header("X-AudienceKit-Client") == "AudienceKit-Swift/\(AudienceKitSDK.version)")
     }
 
@@ -468,6 +690,44 @@ private func makeClient(
         }
     }
 
+    @Test func anUnsupportedAPIVersionIsReported() async throws {
+        let stub = Stub { _ in .json(status: 400, body: #"{"error":"unsupported_api_version","supported":[]}"#) }
+        let (client, store) = makeClient(stub)
+
+        do {
+            _ = try await client.venues()
+            Issue.record("expected an error")
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.unsupportedAPIVersion)
+        }
+        #expect(try store.load()?.token == "session-token")
+    }
+
+    @Test func mapsRESTStatusesToCodes() async throws {
+        let stub = Stub { request in
+            switch request.path {
+            case "/v1/a": .json(status: 409, body: #"{"error":"conflict","message":"Already paid"}"#)
+            case "/v1/b": .json(status: 429, body: "")
+            case "/v1/c": .json(status: 503, body: "")
+            default: .json(status: 418, body: #"{"error":"teapot"}"#)
+            }
+        }
+        let (client, _) = makeClient(stub)
+
+        for (path, code, status) in [("/v1/a", AudienceKitError.Code.conflict, 409),
+                                     ("/v1/b", AudienceKitError.Code.rateLimited, 429),
+                                     ("/v1/c", AudienceKitError.Code.internalError, 503),
+                                     ("/v1/d", "TEAPOT", 418)] {
+            do {
+                _ = try await client.data(for: APIRequest(path: path))
+                Issue.record("expected an error for \(path)")
+            } catch let error as AudienceKitError {
+                #expect(error.code == code)
+                #expect(error.status == status)
+            }
+        }
+    }
+
     @Test func requiresASession() async throws {
         let stub = Stub { _ in .json(status: 200, body: "{}") }
         let (client, _) = makeClient(stub, token: nil)
@@ -483,8 +743,9 @@ private func makeClient(
         do {
             _ = try await client.venues()
             Issue.record("expected an error")
-        } catch let AudienceKitError.network(error) {
-            #expect(error.code == .notConnectedToInternet)
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.network)
+            #expect(error.underlying?.code == .notConnectedToInternet)
         }
     }
 
@@ -495,7 +756,9 @@ private func makeClient(
         do {
             _ = try await client.venues()
             Issue.record("expected an error")
-        } catch AudienceKitError.decoding {}
+        } catch let error as AudienceKitError {
+            #expect(error.code == AudienceKitError.Code.decoding)
+        }
     }
 }
 
@@ -506,7 +769,7 @@ private func makeClient(
         }
         let (client, _) = makeClient(stub)
 
-        let locale = try await client.closestLocale(near: Coordinates(latitude: 47.6, longitude: -122.3, beaconMajor: 0))
+        let locale = try await client.closestLocale(near: Coordinate(latitude: 47.6, longitude: -122.3), beaconMajor: 0)
 
         #expect(locale?.name == "Seattle")
         let body = try #require(stub.requests.first).jsonBody()
@@ -514,11 +777,15 @@ private func makeClient(
         #expect(near["latitude"] as? Double == 47.6)
         #expect(near["longitude"] as? Double == -122.3)
         #expect(near["beaconMajor"] == nil)
+
+        let withBeacon = Coordinate(latitude: 1, longitude: 2).coordinatesInput(beaconMajor: 7, beaconMinor: 0)
+        #expect(withBeacon == ["latitude": 1.0, "longitude": 2.0, "beaconMajor": 7])
+        #expect(Coordinate(latitude: 1, longitude: 2).graphQLValue == ["latitude": 1.0, "longitude": 2.0])
     }
 
     @Test func setsAnRSVP() async throws {
         let stub = Stub { _ in
-            .json(status: 200, body: #"{"data":{"rsvpEvent":{"event":{"id":"e-1","viewerRsvp":"ATTENDING"}}}}"#)
+            .json(status: 200, body: #"{"data":{"rsvpEvent":{"event":{"id":"e-1","rsvp":{"mine":"ATTENDING"}}}}}"#)
         }
         let (client, _) = makeClient(stub)
 
@@ -529,17 +796,27 @@ private func makeClient(
         let variables = try #require(body["variables"] as? [String: Any])
         #expect(variables["eventId"] as? String == "e-1")
         #expect(variables["state"] as? String == "ATTENDING")
+        #expect((body["query"] as? String)?.contains("rsvp { mine }") == true)
+        #expect((body["query"] as? String)?.contains("viewerRsvp") == false)
     }
 
     @Test func registersTheDevice() async throws {
         let stub = Stub { _ in .json(status: 200, body: #"{"data":{"registerDevice":{"registered":true}}}"#) }
         let (client, _) = makeClient(stub)
 
-        try await client.registerDevice(notificationToken: "apns")
+        try await client.registerDevice(token: "apns", appId: "social.hotmess.ios", sandbox: true)
+        try await client.registerDevice(token: "apns")
 
         let body = try #require(stub.requests.first).jsonBody()
         #expect(body["operationName"] as? String == "RegisterDevice")
-        #expect((body["variables"] as? [String: Any])?["notificationToken"] as? String == "apns")
+        let variables = try #require(body["variables"] as? [String: Any])
+        #expect(variables["notificationToken"] as? String == "apns")
+        #expect(variables["appId"] as? String == "social.hotmess.ios")
+        #expect(variables["sandbox"] as? Bool == true)
+        #expect((body["query"] as? String)?.contains("appId: $appId, sandbox: $sandbox") == true)
+        // Left out, not sent as null.
+        let bare = try #require(stub.requests.last).jsonBody()["variables"] as? [String: Any]
+        #expect(bare?.keys.sorted() == ["notificationToken"])
     }
 
     @Test func decodesWithTheCallersDecoder() async throws {
@@ -549,21 +826,41 @@ private func makeClient(
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let payload = try await client.graphQL("{ when }", as: Payload.self, decoder: decoder)
+        // Aliases, so the document is one the schema knows while the stub answers what the decoder is given.
+        let payload = try await client.graphQL("{ when: name }", as: Payload.self, decoder: decoder)
 
         #expect(payload.when == Date(timeIntervalSince1970: 1_791_316_800))
+    }
+
+    @Test func decodesISO8601DatesByDefault() async throws {
+        struct Payload: Decodable, Sendable { var when: Date; var later: Date }
+        let stub = Stub { _ in
+            .json(status: 200, body: #"{"data":{"when":"2026-10-06T20:00:00.500Z","later":"2026-10-06T13:00:00-07:00"}}"#)
+        }
+        let (client, _) = makeClient(stub)
+
+        let payload = try await client.graphQL("{ when: name later: subdomain }", as: Payload.self)
+
+        #expect(payload.when == Date(timeIntervalSince1970: 1_791_316_800.5))
+        #expect(payload.later == Date(timeIntervalSince1970: 1_791_316_800))
+        #expect(ISO8601.string(from: payload.later) == "2026-10-06T20:00:00Z")
+        #expect(ISO8601.string(from: payload.when) == "2026-10-06T20:00:00.500Z")
+        #expect(ISO8601.date(from: ISO8601.string(from: payload.when)) == payload.when)
+        #expect(ISO8601.date(from: "yesterday") == nil)
+        #expect(String(decoding: try JSONEncoder.audienceKit.encode([payload.later]), as: UTF8.self)
+            == #"["2026-10-06T20:00:00Z"]"#)
     }
 }
 
 @Suite struct AudienceResolution {
-    @Test func usesTheSessionsAudienceClaim() async throws {
+    @Test func usesTheCredentialsAudience() async throws {
         let stub = Stub { _ in .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#) }
-        let token = makeJWT(["id": "u-1", "audience_id": "from-token"])
-        let (client, _) = makeClient(stub, audienceID: nil, token: token)
+        let (client, _) = makeClient(stub, audienceID: nil, credentialAudienceID: "from-credential")
 
         _ = try await client.venues()
 
-        #expect(stub.requests.map(\.path) == ["/v1/audience/from-token/graphql"])
+        #expect(stub.requests.map(\.path) == ["/v1/audience/from-credential/graphql"])
+        #expect(try await client.audienceID() == "from-credential")
     }
 
     @Test func looksUpTheHostsAudienceForAPlatformSession() async throws {
@@ -576,7 +873,8 @@ private func makeClient(
             }
             return .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#)
         }
-        let (client, _) = makeClient(stub, audienceID: nil, token: makeJWT(["id": "u-1"]))
+        // A platform-console session belongs to no audience.
+        let (client, _) = makeClient(stub, audienceID: nil, credentialAudienceID: nil)
 
         _ = try await client.venues()
         _ = try await client.venues()
@@ -588,18 +886,21 @@ private func makeClient(
 
     @Test func needsAnAudienceOrAHost() async throws {
         let stub = Stub { _ in .json(status: 200, body: "{}") }
-        let (client, _) = makeClient(stub, host: nil, audienceID: nil, token: "not-a-jwt")
+        let (client, _) = makeClient(stub, host: nil, audienceID: nil, credentialAudienceID: nil)
 
-        await #expect(throws: AudienceKitError.self) { try await client.venues() }
+        await #expect(throws: AudienceKitError.missingConfiguration("set an audienceID or a host")) {
+            try await client.venues()
+        }
         #expect(stub.requests.isEmpty)
     }
 }
 
 @Suite struct Cover {
     static let admission = #"""
-    {"id":"7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b","status":"PENDING","night":"2026-10-09","amountCents":1000,
-     "totalCents":1112,"currency":"usd","isRefundable":false,"passSecret":"c2VjcmV0LWtleS1mb3ItaG90LW1lc3MtY292ZXI=",
-     "scanCount":0,"checkedInAt":null,"userName":"Rick Mark","userPhotoUrl":null,
+    {"id":"7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b","status":"PENDING","night":"2026-10-09",
+     "amount":{"cents":1000,"currency":"usd"},"total":{"cents":1112,"currency":"usd"},
+     "isRefundable":false,"passSecret":"c2VjcmV0LWtleS1mb3ItaG90LW1lc3MtY292ZXI=",
+     "scanCount":1,"checkedInAt":"2026-10-10T04:41:00.500Z","profile":{"id":"u-1","name":"Rick Mark","avatarUrl":null},
      "venue":{"id":"v-1","name":"The Stud","photoUrl":null},"event":null}
     """#
 
@@ -620,8 +921,11 @@ private func makeClient(
         #expect(purchase.paymentIntentClientSecret == "pi_1_secret_2")
         #expect(purchase.stripeAccountId == "acct_1")
         #expect(purchase.admission.status == .pending)
-        #expect(purchase.admission.totalCents == 1112)
-        #expect(purchase.admission.venue?.name == "The Stud")
+        #expect(purchase.admission.total == Money(cents: 1112, currency: "usd"))
+        #expect(purchase.admission.amount.cents == 1000)
+        #expect(purchase.admission.profile.name == "Rick Mark")
+        #expect(purchase.admission.venue.name == "The Stud")
+        #expect(purchase.admission.checkedInAt == Date(timeIntervalSince1970: 1_791_607_260.5))
         #expect(try #require(stub.requests.first).jsonBody()["variables"] as? [String: String] == ["venueId": "v-1"])
 
         let admission = try await client.confirmCover(admissionID: purchase.admission.id)
@@ -660,7 +964,8 @@ private func makeClient(
             if operation == "DoorVenues" {
                 return .json(status: 200, body: #"""
                 {"data":{"me":{"cover":{"doorVenues":{"nodes":[{"id":"v-1","name":"The Stud","photoUrl":null,
-                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}}]}}}}}
+                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,
+                  "gross":{"cents":12000,"currency":"usd"}}}}}]}}}}}
                 """#)
             }
             return .json(status: 200, body: #"""
@@ -673,6 +978,7 @@ private func makeClient(
         let venues = try await client.doorVenues()
         #expect(venues.first?.door?.paidCount == 12)
         #expect(venues.first?.door?.checkedInCount == 8)
+        #expect(venues.first?.door?.gross == Money(cents: 12000, currency: "usd"))
 
         let result = try await client.scanAdmission(venueID: "v-1", code: "HMC1.a.1.b")
         #expect(result.outcome == .reEntry)
@@ -692,8 +998,8 @@ private func makeClient(
             }
             return .json(status: 200, body: #"""
             {"data":{"venues":{"venue":{"id":"v-1","name":"The Stud","tickets":{"cover":{
-              "charge":{"amountCents":1000,"totalCents":1112,"feeCents":112,"currency":"usd","night":"2026-10-09",
-                "from":"21:00","payable":true,"event":null},
+              "charge":{"amount":{"cents":1000,"currency":"usd"},"fee":{"cents":112,"currency":"usd"},
+                "total":{"cents":1112,"currency":"usd"},"night":"2026-10-09","from":"21:00","payable":true,"event":null},
               "viewerAdmission":\#(Self.admission)}}}}}}
             """#)
         }
@@ -701,7 +1007,8 @@ private func makeClient(
 
         let coverResponse = try await client.venueCover(venueID: "v-1")
         let cover = try #require(coverResponse)
-        #expect(cover.coverCharge?.totalCents == 1112)
+        #expect(cover.coverCharge?.total.cents == 1112)
+        #expect(cover.coverCharge?.fee == Money(cents: 112, currency: "usd"))
         #expect(cover.coverCharge?.payable == true)
         #expect(cover.viewerAdmission?.status == .pending)
         #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
@@ -735,6 +1042,22 @@ private func makeClient(
             == "HMC1.7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b.59711041.p2tYO-g5T45lRFzN")
         #expect(CoverPass.secondsRemaining(at: start.addingTimeInterval(12)) == 18)
         #expect(CoverPass.code(admissionID: id, secret: "not base64!", at: start) == nil)
+        // The prefix is the audience's: the configuration's by default, HMC1 unless set.
+        #expect(CoverPass.code(admissionID: id, secret: secret, prefix: "XYZ1", at: start)
+            == "XYZ1.7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b.59711040.HOStwur5mLjF7zvb")
+        #expect(AudienceKitConfiguration(baseURL: URL(string: "https://api.example")!).coverPassPrefix == "HMC1")
+        let configuration = AudienceKitConfiguration(baseURL: URL(string: "https://api.example")!,
+                                                     coverPassPrefix: "XYZ1", feeLabel: "Hot Mess fee")
+        let client = AudienceKitClient(configuration: configuration)
+        let usd = Money(cents: 1000, currency: "usd")
+        let buyer = Profile(id: "u-1", name: "Rick M.")
+        let admission = Admission(id: id, status: .paid, night: "2026-10-09", amount: usd, total: usd,
+                                  passSecret: secret, profile: buyer, venue: CoverVenue(id: "v-1"))
+        #expect(client.coverPassCode(for: admission, at: start)?.hasPrefix("XYZ1.") == true)
+        let withoutSecret = Admission(id: id, status: .paid, night: "2026-10-09", amount: usd, total: usd,
+                                      profile: buyer, venue: CoverVenue(id: "v-1"))
+        #expect(client.coverPassCode(for: withoutSecret, at: start) == nil)
+        #expect(configuration.feeLabel == "Hot Mess fee")
     }
     #endif
 }
@@ -785,7 +1108,29 @@ private func makeClient(
     @Test func decodesPresenceLeniently() throws {
         let json = #"[{"id":"f-1","presence":"ONLINE"},{"id":"f-2","presence":"online"},{"id":"f-3","presence":"AWAY"},{"id":"f-4"}]"#
         let friends = try JSONDecoder().decode([Friend].self, from: Data(json.utf8))
-        #expect(friends.map(\.presence) == [.online, .online, .offline, nil])
+        #expect(friends.map(\.presence) == [.online, .online, .unknown("AWAY"), nil])
+        #expect(friends[2].presence?.isReachable == false)
+        #expect(Presence.known.contains(.offline))
+    }
+
+    @Test func keepsUnknownEnumValuesAndSendsThemBack() throws {
+        let states = try JSONDecoder().decode([RSVPState].self, from: Data(#"["ATTENDING","PLUS_ONE"]"#.utf8))
+        #expect(states == [.attending, .unknown("PLUS_ONE")])
+        #expect(states.map(\.rawValue) == ["ATTENDING", "PLUS_ONE"])
+        #expect(String(decoding: try JSONEncoder().encode(states), as: UTF8.self) == #"["ATTENDING","PLUS_ONE"]"#)
+        #expect(!RSVPState.known.contains(.unknown("PLUS_ONE")))
+
+        let relationship = try JSONDecoder().decode([PersonEventInvolvement.Relationship].self,
+                                                    from: Data(#"["troupe","GUEST"]"#.utf8))
+        #expect(relationship == [.troupe, .unknown("GUEST")])
+
+        let providers = try JSONDecoder().decode([PaymentProvider].self, from: Data(#"["SQUARE","ADYEN"]"#.utf8))
+        #expect(providers == [.square, .unknown("ADYEN")])
+
+        #expect(AudienceKitEnvironment(rawValue: "staging") == .staging)
+        #expect(AudienceKitEnvironment(rawValue: "preview") == .unknown("preview"))
+        #expect(AudienceKitEnvironment.unknown("preview").rawValue == "preview")
+        #expect(AudienceKitEnvironment.known == [.production, .staging])
     }
 
     @Test func parsesHexColors() {
@@ -805,24 +1150,74 @@ private func makeClient(
     }
 
     @Test func parsesWKTPoints() {
+        #expect(Coordinate(latitude: 37.25, longitude: -122.5).wkt == "POINT (-122.5 37.25)")
         #expect(Coordinate(wkt: "POINT (-122.5 37.25)") == Coordinate(latitude: 37.25, longitude: -122.5))
         #expect(Coordinate(wkt: "SRID=4326;POINT(1 2)") == Coordinate(latitude: 2, longitude: 1))
         #expect(Coordinate(wkt: "POLYGON ((0 0, 1 1))") == nil)
         #expect(Coordinate(wkt: "") == nil)
     }
 
-    @Test func readsTheAudienceClaim() {
-        #expect(AudienceKitClient.claims(of: makeJWT(["audience_id": "a-1"]))?.audienceID == "a-1")
-        #expect(AudienceKitClient.claims(of: makeJWT(["id": "u"]))?.audienceID == nil)
-        #expect(AudienceKitClient.claims(of: "garbage") == nil)
+    @Test func inMemoryStoreRoundTrips() throws {
+        let credential = Credential(token: "t", userId: "u-1", audienceId: "a-1", role: "member",
+                                    endpoint: URL(string: "https://api.example/v1/audience/a-1/graphql")!)
+        let store = InMemoryCredentialStore()
+        #expect(try store.load() == nil)
+        try store.save(credential)
+        #expect(try store.load() == credential)
+        try store.delete()
+        #expect(try store.load() == nil)
+    }
+}
+
+@Suite struct Credentials {
+    @Test func decodesTheTokenJSON() throws {
+        let json = #"""
+        {"token":"jwt","userId":"u-1","audienceId":"a-1","role":"venue_device",
+         "endpoint":"https://api.audiencekit.com/v1/audience/a-1/staffql","venueDeviceId":"vd-1",
+         "expiresAt":"2026-10-12T03:00:00.250Z"}
+        """#
+        let credential = try JSONDecoder().decode(Credential.self, from: Data(json.utf8))
+
+        #expect(credential.token == "jwt")
+        #expect(credential.userId == "u-1")
+        #expect(credential.audienceId == "a-1")
+        #expect(credential.role == "venue_device")
+        #expect(credential.venueDeviceId == "vd-1")
+        #expect(credential.isStaff)
+        #expect(credential.origin == URL(string: "https://api.audiencekit.com"))
+        #expect(credential.expiresAt == Date(timeIntervalSince1970: 1_791_774_000.25))
+        #expect(credential.isExpired(at: Date(timeIntervalSince1970: 1_791_774_001)))
+        #expect(!credential.isExpired(at: Date(timeIntervalSince1970: 1_791_774_000)))
+        // Not in the API's JSON: the SDK stamps the version it spoke when the credential was issued.
+        #expect(credential.apiVersion == AudienceKitSDK.apiVersion)
     }
 
-    @Test func inMemoryStoreRoundTrips() throws {
-        let store = InMemoryTokenStore()
-        #expect(try store.loadToken() == nil)
-        try store.saveToken("t")
-        #expect(try store.loadToken() == "t")
-        try store.deleteToken()
-        #expect(try store.loadToken() == nil)
+    @Test func toleratesAPlatformSession() throws {
+        let json = #"""
+        {"token":"jwt","userId":"u-1","audienceId":null,"role":"admin",
+         "endpoint":"http://localhost:3000/v1/tenants/graphql","venueDeviceId":null,"expiresAt":null}
+        """#
+        let credential = try JSONDecoder().decode(Credential.self, from: Data(json.utf8))
+        #expect(credential.audienceId == nil)
+        #expect(credential.expiresAt == nil)
+        #expect(!credential.isExpired())
+        #expect(!credential.isStaff)
+        #expect(credential.origin == URL(string: "http://localhost:3000"))
+    }
+
+    @Test func roundTripsThroughTheStoreFormat() throws {
+        let credential = Credential(token: "t", userId: "u-1", audienceId: "a-1", role: "member",
+                                    endpoint: URL(string: "https://api.example/v1/audience/a-1/graphql")!,
+                                    expiresAt: Date(timeIntervalSince1970: 1_791_774_000), apiVersion: "2026-10-11")
+
+        let data = try CredentialEnvelope.encode(credential)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?["v"] as? Int == CredentialEnvelope.formatVersion)
+        #expect((object?["credential"] as? [String: Any])?["expiresAt"] as? String == "2026-10-12T03:00:00Z")
+        #expect(CredentialEnvelope.decode(data) == credential)
+
+        // A raw token from the first SDKs' keychain item, or another format version, reads as no credential.
+        #expect(CredentialEnvelope.decode(Data("eyJhbGciOiJIUzI1NiJ9.e30.sig".utf8)) == nil)
+        #expect(CredentialEnvelope.decode(Data(#"{"v":0,"credential":{}}"#.utf8)) == nil)
     }
 }

@@ -1,27 +1,28 @@
 import AudienceCore
 import Foundation
 
-/// The GraphQL documents behind the client's typed helpers. Public so apps can reuse the fragments
-/// in their own operations and decode into the same models.
-public enum Queries {
-    public static let pageFields = "id name photoUrl bannerUrl"
-    public static let localeFields = "id name label cityNames bannerUrl profile { places { placeId } }"
+/// The GraphQL documents behind the client's typed helpers: this SDK version's fragments, which the models in
+/// `Models.swift` decode. Internal: apps run their own operations through `AudienceSession.graphQL` and decode into
+/// their own models.
+enum Queries {
+    static let pageFields = "id name photoUrl bannerUrl"
+    static let localeFields = "id name label cityNames bannerUrl profile { places { placeId } }"
     /// A tag on a venue, person or event: its name and chip color.
-    public static let tagFields = "id name color"
+    static let tagFields = "id name color"
     /// A person's home venue or gig venue: where it is, and which of the signed-in user's
     /// friends are there now.
-    public static let personVenueFields = "id name photoUrl locale { id name } friends { list { nodes { id name facebookId presence } } }"
+    static let personVenueFields = "id name photoUrl locale { id name } friends { list { nodes { id name facebookId presence } } }"
     /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
     /// `venue` is the events mixin: a display name ("To be announced" when there is none) and the venue, if any.
-    public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
+    static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
 
-    public static let audience = """
+    static let audience = """
     query Audience {
       id name subdomain theme { preset tagline light { name value } dark { name value } }
     }
     """
 
-    public static let venues = """
+    static let venues = """
     query Venues {
       venues {
         list {
@@ -37,7 +38,7 @@ public enum Queries {
     }
     """
 
-    public static let people = """
+    static let people = """
     query People {
       people {
         list {
@@ -53,51 +54,39 @@ public enum Queries {
     }
     """
 
-    public static let locales = """
+    static let locales = """
     query Locales {
       locales { \(localeFields) }
     }
     """
 
-    public static let me = """
+    static let me = """
     query Me {
       me { self { id name firstName lastName emailAddress isAdmin presence } }
     }
     """
 
-    public static let closestLocale = """
+    static let closestLocale = """
     query ClosestLocale($near: CoordinatesInput!) {
       closestLocale(near: $near) { \(localeFields) }
     }
     """
 
-    /// Records the user's position and says where that is: `venue` when they're in one, else `locale` and
-    /// its `nearbyVenues`, plus `audience` for its mixins. Select the fields the app needs (with the mixins it
-    /// reads, such as `venue { friends { list { name } } }`) and decode the result yourself; `$position` is a
-    /// ``Coordinates/graphQLValue``.
-    public static func reportLocation(selecting fields: String) -> String {
-        """
-        mutation ReportLocation($position: CoordinatesInput!) {
-          reportLocation(input: { position: $position }) { \(fields) }
-        }
-        """
-    }
-
-    public static let rsvpEvent = """
+    static let rsvpEvent = """
     mutation RSVPEvent($eventId: ID!, $state: RSVPState!) {
-      rsvpEvent(input: { eventId: $eventId, state: $state }) { event { id viewerRsvp } }
+      rsvpEvent(input: { eventId: $eventId, state: $state }) { event { id rsvp { mine } } }
     }
     """
 
     /// The tribes people can identify with here, and the signed-in user's own.
-    public static let tribes = """
+    static let tribes = """
     query Tribes {
       id tribes { \(tagFields) tribe }
       me { self { id tribes { isPrivate tag { \(tagFields) tribe } } } }
     }
     """
 
-    public static let identifyWithTribe = """
+    static let identifyWithTribe = """
     mutation IdentifyWithTribe($tagId: ID!, $isPrivate: Boolean) {
       identifyWithTribe(input: { tagId: $tagId, isPrivate: $isPrivate }) {
         tribes { isPrivate tag { \(tagFields) tribe } }
@@ -105,28 +94,32 @@ public enum Queries {
     }
     """
 
-    public static let leaveTribe = """
+    static let leaveTribe = """
     mutation LeaveTribe($tagId: ID!) {
       leaveTribe(input: { tagId: $tagId }) { tribes { isPrivate tag { \(tagFields) tribe } } }
     }
     """
 
-    public static let registerDevice = """
-    mutation RegisterDevice($notificationToken: String!) {
-      registerDevice(input: { notificationToken: $notificationToken }) { registered }
+    static let registerDevice = """
+    mutation RegisterDevice($notificationToken: String!, $appId: String, $sandbox: Boolean) {
+      registerDevice(input: { notificationToken: $notificationToken, appId: $appId, sandbox: $sandbox }) { registered }
     }
     """
 
+    /// A ``Money``.
+    static let moneyFields = "cents currency"
     /// A ``CoverCharge``.
-    public static let coverChargeFields = "amountCents totalCents feeCents currency night from payable event { id name }"
-    /// An ``Admission``, with the pass secret the buyer makes the QR code from.
-    public static let admissionFields = """
-    id status night amountCents totalCents currency isRefundable passSecret scanCount checkedInAt \
-    userName userPhotoUrl venue { id name photoUrl } event { id name }
+    static let coverChargeFields = """
+    amount { \(moneyFields) } fee { \(moneyFields) } total { \(moneyFields) } night from payable event { id name }
     """
-    public static let doorNightFields = "night paidCount checkedInCount grossCents"
+    /// An ``Admission``: the pass secret the buyer makes the QR code from, and the buyer's ``Profile`` for the door.
+    static let admissionFields = """
+    id status night amount { \(moneyFields) } total { \(moneyFields) } isRefundable passSecret scanCount checkedInAt \
+    profile { id name avatarUrl } venue { id name photoUrl } event { id name }
+    """
+    static let doorNightFields = "night paidCount checkedInCount gross { \(moneyFields) }"
 
-    public static let venueCover = """
+    static let venueCover = """
     query VenueCover($id: ID!) {
       venues {
         venue(id: $id) {
@@ -142,25 +135,29 @@ public enum Queries {
     }
     """
 
-    public static let admissions = """
+    static let admissions = """
     query Admissions {
       me { cover { admissions { nodes { \(admissionFields) } } } }
     }
     """
 
-    public static let doorVenues = """
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
+    static let doorVenues = """
+    # endpoint: staff
     query DoorVenues {
       me { cover { doorVenues { nodes { id name photoUrl tickets { cover { door { \(doorNightFields) } } } } } } }
     }
     """
 
-    public static let venueDoor = """
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
+    static let venueDoor = """
+    # endpoint: staff
     query VenueDoor($id: ID!, $night: ISO8601Date) {
       venues { venue(id: $id) { id name photoUrl tickets { cover { door(night: $night) { \(doorNightFields) } } } } }
     }
     """
 
-    public static let buyCover = """
+    static let buyCover = """
     mutation BuyCover($venueId: ID!) {
       buyCover(input: { venueId: $venueId }) {
         admission { \(admissionFields) }
@@ -169,7 +166,7 @@ public enum Queries {
     }
     """
 
-    public static let payCover = """
+    static let payCover = """
     mutation PayCover($admissionId: ID!, $sourceId: String!, $verificationToken: String) {
       payCover(input: { admissionId: $admissionId, sourceId: $sourceId, verificationToken: $verificationToken }) {
         admission { \(admissionFields) }
@@ -177,19 +174,21 @@ public enum Queries {
     }
     """
 
-    public static let confirmCover = """
+    static let confirmCover = """
     mutation ConfirmCover($admissionId: ID!) {
       confirmCover(input: { admissionId: $admissionId }) { admission { \(admissionFields) } }
     }
     """
 
-    public static let refundAdmission = """
+    static let refundAdmission = """
     mutation RefundAdmission($admissionId: ID!) {
       refundAdmission(input: { admissionId: $admissionId }) { admission { \(admissionFields) } }
     }
     """
 
-    public static let scanAdmission = """
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
+    static let scanAdmission = """
+    # endpoint: staff
     mutation ScanAdmission($venueId: ID!, $code: String!) {
       scanAdmission(input: { venueId: $venueId, code: $code }) {
         result { outcome message admission { \(admissionFields) } }
@@ -197,7 +196,7 @@ public enum Queries {
     }
     """
 
-    public static let node = """
+    static let node = """
     query Node($id: ID!) {
       node(id: $id) { __typename id }
     }
@@ -254,8 +253,10 @@ struct TribesResponse: Decodable, Sendable {
 struct TribesPayload: Decodable, Sendable { var tribes: [TribeIdentification] }
 struct IdentifyWithTribeResponse: Decodable, Sendable { var identifyWithTribe: TribesPayload }
 struct LeaveTribeResponse: Decodable, Sendable { var leaveTribe: TribesPayload }
+/// `rsvpEvent { event { rsvp { mine } } }`: the signed-in user's answer, from the event's rsvp mixin.
 struct RSVPEventResponse: Decodable, Sendable {
-    struct Event: Decodable, Sendable { var viewerRsvp: RSVPState }
+    struct RSVP: Decodable, Sendable { var mine: RSVPState }
+    struct Event: Decodable, Sendable { var rsvp: RSVP }
     struct Payload: Decodable, Sendable { var event: Event }
     var rsvpEvent: Payload
 }

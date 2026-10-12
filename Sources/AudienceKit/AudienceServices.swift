@@ -1,6 +1,5 @@
 import AudienceCore
 import Foundation
-import AudienceCore
 
 extension AudienceSession {
     /// The audience, with its theme.
@@ -34,9 +33,11 @@ extension AudienceSession {
                           as: NodeResponse.self).node
     }
 
-    /// The audience's locale nearest a position, or `nil` when it has none.
-    public func closestLocale(near position: Coordinates) async throws -> AudienceLocale? {
-        try await graphQL(Queries.closestLocale, variables: ["near": position.graphQLValue],
+    /// The audience's locale nearest a position, or `nil` when it has none. `beaconMajor` is the iBeacon the device
+    /// is near, if any (its major value names a locale).
+    public func closestLocale(near position: Coordinate, beaconMajor: Int? = nil) async throws -> AudienceLocale? {
+        try await graphQL(Queries.closestLocale,
+                          variables: ["near": position.coordinatesInput(beaconMajor: beaconMajor)],
                           operationName: "ClosestLocale", as: ClosestLocaleResponse.self).closestLocale
     }
 
@@ -44,7 +45,7 @@ extension AudienceSession {
     @discardableResult
     public func setRSVP(_ state: RSVPState, forEvent eventID: String) async throws -> RSVPState {
         try await graphQL(Queries.rsvpEvent, variables: ["eventId": .string(eventID), "state": .string(state.rawValue)],
-                          operationName: "RSVPEvent", as: RSVPEventResponse.self).rsvpEvent.event.viewerRsvp
+                          operationName: "RSVPEvent", as: RSVPEventResponse.self).rsvpEvent.event.rsvp.mine
     }
 
     /// The tribes people can identify with here, and the signed-in user's own (empty when signed out).
@@ -69,10 +70,15 @@ extension AudienceSession {
                           as: LeaveTribeResponse.self).leaveTribe.tribes
     }
 
-    /// Stores the push notification token for the device this session signed in on.
-    public func registerDevice(notificationToken: String) async throws {
-        _ = try await graphQL(Queries.registerDevice, variables: ["notificationToken": .string(notificationToken)],
-                              operationName: "RegisterDevice", as: RegisterDeviceResponse.self)
+    /// Stores the push notification token for the device this session signed in on. `appId` is the build's bundle
+    /// ID (the APNs topic), so the API can tell the audience's apps apart, and `sandbox` is true for development
+    /// builds, whose tokens only work with APNs' sandbox.
+    public func registerDevice(token: String, appId: String? = nil, sandbox: Bool? = nil) async throws {
+        var variables: [String: GraphQLValue] = ["notificationToken": .string(token)]
+        if let appId { variables["appId"] = .string(appId) }
+        if let sandbox { variables["sandbox"] = .bool(sandbox) }
+        _ = try await graphQL(Queries.registerDevice, variables: variables, operationName: "RegisterDevice",
+                              as: RegisterDeviceResponse.self)
     }
 
     // MARK: - Cover

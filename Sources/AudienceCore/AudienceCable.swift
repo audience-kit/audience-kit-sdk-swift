@@ -5,8 +5,11 @@ import FoundationNetworking
 #endif
 
 /// The one Action Cable connection an app keeps to the API, carrying every GraphQL subscription it follows (chat
-/// rooms, notifications, the door). Speaks graphql-ruby's protocol over `URLSessionWebSocketTask`, signed with the
-/// session's JWT in the `Authorization` header like every other call (see the API's realtime docs).
+/// rooms, notifications, the door). Speaks graphql-ruby's protocol over `URLSessionWebSocketTask`. The socket opens
+/// on the API instance the session's ``Credential`` names (its `endpoint`'s origin; the configured base URL before
+/// sign-in) and its handshake is dressed like every other call (`Authorization: Bearer <token>`,
+/// `X-AudienceKit-API-Version`, `X-AudienceKit-Client`; see the API's realtime docs). An app gets one from
+/// ``AudienceSession/makeCable(endpoint:url:session:silenceLimit:)``.
 ///
 /// Each operation from ``subscribe(query:variables:operationName:audienceID:)`` gets its own `GraphQLChannel`
 /// subscription on the shared socket, told apart by a fresh `channelId`; once the server confirms it, the cable
@@ -50,10 +53,12 @@ public actor AudienceCable {
         let execute: String
     }
 
-    private let url: URL
+    private let configuration: AudienceKitConfiguration
+    /// Where to open the socket when not the credential's API: a development override.
+    private let address: URL?
     private let endpoint: GraphQLEndpoint
     private let openSocket: @Sendable (URLRequest) -> any CableSocket
-    private let token: @Sendable () -> String?
+    private let credential: @Sendable () -> Credential?
     private let unauthorized: @Sendable (String?) -> Void
     /// How long without a frame before the socket counts as gone.
     public nonisolated let silenceLimit: Duration
@@ -70,26 +75,32 @@ public actor AudienceCable {
     private var attempts = 0
     private var operations: [String: Operation] = [:]
 
-    /// `url` is the socket's address (see ``url(for:)``); `endpoint` is the view the operations run in (the staff
-    /// tools' `staffql`, or the consumer apps' `graphql`). `token` is read whenever the socket (re)opens, so a renewed
-    /// session is picked up without a new cable. `unauthorized` gets the token the server refused when it closes the
+    /// `credential` is read whenever the socket (re)opens, so a renewed session is picked up without a new cable:
+    /// the socket opens at ``url(for:)`` of the credential's ``Credential/origin`` (the configuration's `baseURL`
+    /// when there is no credential), signed with its token, unless `url` names another address. `endpoint` is the
+    /// view the operations run in (the staff tools' `staffql`, or the consumer apps' `graphql`); the HTTP client
+    /// picks its endpoint the same way. `unauthorized` gets the token the server refused when it closes the
     /// connection as `unauthorized` (an ended session), so the owner can sign out.
-    public init(url: URL, endpoint: GraphQLEndpoint = .consumer, session: URLSession = .shared,
-                silenceLimit: Duration = .seconds(12), token: @escaping @Sendable () -> String?,
+    public init(configuration: AudienceKitConfiguration, endpoint: GraphQLEndpoint = .consumer, url: URL? = nil,
+                session: URLSession = .shared, silenceLimit: Duration = .seconds(12),
+                credential: @escaping @Sendable () -> Credential?,
                 unauthorized: @escaping @Sendable (String?) -> Void = { _ in }) {
-        self.init(url: url, endpoint: endpoint, silenceLimit: silenceLimit, token: token, unauthorized: unauthorized) {
+        self.init(configuration: configuration, endpoint: endpoint, url: url, silenceLimit: silenceLimit,
+                  credential: credential, unauthorized: unauthorized) {
             WebSocketTaskSocket(session.webSocketTask(with: $0))
         }
     }
 
     /// A cable over another socket (tests drive the protocol with one).
-    public init(url: URL, endpoint: GraphQLEndpoint = .consumer, silenceLimit: Duration = .seconds(12),
-                token: @escaping @Sendable () -> String?, unauthorized: @escaping @Sendable (String?) -> Void = { _ in },
+    public init(configuration: AudienceKitConfiguration, endpoint: GraphQLEndpoint = .consumer, url: URL? = nil,
+                silenceLimit: Duration = .seconds(12), credential: @escaping @Sendable () -> Credential?,
+                unauthorized: @escaping @Sendable (String?) -> Void = { _ in },
                 openSocket: @escaping @Sendable (URLRequest) -> any CableSocket) {
-        self.url = url
+        self.configuration = configuration
+        self.address = url
         self.endpoint = endpoint
         self.silenceLimit = silenceLimit
-        self.token = token
+        self.credential = credential
         self.unauthorized = unauthorized
         self.openSocket = openSocket
     }
@@ -194,10 +205,10 @@ public actor AudienceCable {
 
     private func connect() {
         guard socket == nil else { return }
-        var request = URLRequest(url: url)
-        let signedWith = token()
-        socketToken = signedWith
-        if let signedWith { request.setValue("JWT \(signedWith)", forHTTPHeaderField: "Authorization") }
+        let signedWith = credential()
+        socketToken = signedWith?.token
+        var request = URLRequest(url: address ?? Self.url(for: signedWith?.origin ?? configuration.baseURL))
+        request.setAudienceKitHeaders(environment: configuration.environment, token: signedWith?.token)
         let socket = openSocket(request)
         self.socket = socket
         generation += 1
