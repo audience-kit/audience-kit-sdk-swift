@@ -61,7 +61,7 @@ public enum Queries {
 
     public static let me = """
     query Me {
-      me { id name firstName lastName emailAddress isAdmin presence }
+      me { self { id name firstName lastName emailAddress isAdmin presence } }
     }
     """
 
@@ -93,7 +93,7 @@ public enum Queries {
     public static let tribes = """
     query Tribes {
       id tribes { \(tagFields) tribe }
-      me { id tribes { isPrivate tag { \(tagFields) tribe } } }
+      me { self { id tribes { isPrivate tag { \(tagFields) tribe } } } }
     }
     """
 
@@ -144,13 +144,13 @@ public enum Queries {
 
     public static let admissions = """
     query Admissions {
-      cover { admissions { nodes { \(admissionFields) } } }
+      me { cover { admissions { nodes { \(admissionFields) } } } }
     }
     """
 
     public static let doorVenues = """
     query DoorVenues {
-      cover { doorVenues { nodes { id name photoUrl tickets { cover { door { \(doorNightFields) } } } } } }
+      me { cover { doorVenues { nodes { id name photoUrl tickets { cover { door { \(doorNightFields) } } } } } } }
     }
     """
 
@@ -204,7 +204,7 @@ public enum Queries {
     """
 }
 
-/// A connection read as `nodes { … }`: the mixin lists (`venues { list }`, `cover { admissions }`) are connections.
+/// A connection read as `nodes { … }`: the mixin lists (`venues { list }`, `me { cover { admissions } }`) are connections.
 struct Nodes<Element: Decodable & Sendable>: Decodable, Sendable { var nodes: [Element] }
 
 /// `venues { list { nodes } }` on the root, the audience.
@@ -225,7 +225,16 @@ struct PeopleResponse: Decodable, Sendable {
 
 /// `locales` on the root, the audience.
 struct LocalesResponse: Decodable, Sendable { var locales: [AudienceLocale]? }
-struct MeResponse: Decodable, Sendable { var me: User? }
+/// `me { self }`: the viewer's state (UserState), and their own profile in it (SelfUser).
+struct MeResponse: Decodable, Sendable {
+    struct State: Decodable, Sendable {
+        var profile: SelfUser?
+
+        private enum CodingKeys: String, CodingKey { case profile = "self" }
+    }
+
+    var me: State?
+}
 struct NodeResponse: Decodable, Sendable { var node: Node? }
 struct ClosestLocaleResponse: Decodable, Sendable { var closestLocale: AudienceLocale? }
 struct RegisterDeviceResponse: Decodable, Sendable {
@@ -233,7 +242,12 @@ struct RegisterDeviceResponse: Decodable, Sendable {
     var registerDevice: Payload
 }
 struct TribesResponse: Decodable, Sendable {
-    struct Mine: Decodable, Sendable { var tribes: [TribeIdentification] }
+    struct Profile: Decodable, Sendable { var tribes: [TribeIdentification] }
+    struct Mine: Decodable, Sendable {
+        var profile: Profile?
+
+        private enum CodingKeys: String, CodingKey { case profile = "self" }
+    }
     var tribes: [Tag]?
     var me: Mine?
 }
@@ -253,20 +267,22 @@ struct VenueCoverResponse: Decodable, Sendable {
     var venue: VenueCover? { venues.venue }
 }
 
-/// `cover { admissions { nodes } }`.
+/// `me { cover { admissions { nodes } } }`: the viewer's passes are theirs, under `me`.
 struct AdmissionsResponse: Decodable, Sendable {
     struct Cover: Decodable, Sendable { var admissions: Nodes<Admission> }
+    struct Me: Decodable, Sendable { var cover: Cover }
 
-    var cover: Cover
-    var admissions: [Admission] { cover.admissions.nodes }
+    var me: Me?
+    var admissions: [Admission] { me?.cover.admissions.nodes ?? [] }
 }
 
-/// `cover { doorVenues { nodes } }`.
+/// `me { cover { doorVenues { nodes } } }`.
 struct DoorVenuesResponse: Decodable, Sendable {
     struct Cover: Decodable, Sendable { var doorVenues: Nodes<DoorVenue> }
+    struct Me: Decodable, Sendable { var cover: Cover }
 
-    var cover: Cover
-    var doorVenues: [DoorVenue] { cover.doorVenues.nodes }
+    var me: Me?
+    var doorVenues: [DoorVenue] { me?.cover.doorVenues.nodes ?? [] }
 }
 
 /// `venues { venue(id:) }`.

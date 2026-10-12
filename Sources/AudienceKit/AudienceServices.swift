@@ -23,9 +23,9 @@ extension AudienceSession {
         try await graphQL(Queries.locales, operationName: "Locales", as: LocalesResponse.self).locales ?? []
     }
 
-    /// The signed-in user, or `nil` when the API has no current user.
-    public func me() async throws -> User? {
-        try await graphQL(Queries.me, operationName: "Me", as: MeResponse.self).me
+    /// The signed-in user's own profile (`me { self }`), or `nil` when the API has no current user.
+    public func me() async throws -> SelfUser? {
+        try await graphQL(Queries.me, operationName: "Me", as: MeResponse.self).me?.profile
     }
 
     /// Any record by its `id` (its UUID), or `nil` when it doesn't exist or belongs to another audience.
@@ -50,7 +50,7 @@ extension AudienceSession {
     /// The tribes people can identify with here, and the signed-in user's own (empty when signed out).
     public func tribes() async throws -> Tribes {
         let data = try await graphQL(Queries.tribes, operationName: "Tribes", as: TribesResponse.self)
-        return Tribes(available: data.tribes ?? [], mine: data.me?.tribes ?? [])
+        return Tribes(available: data.tribes ?? [], mine: data.me?.profile?.tribes ?? [])
     }
 
     /// Identifies the signed-in user with a tribe, privately unless `isPrivate` is false, or changes that. Returns

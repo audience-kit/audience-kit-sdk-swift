@@ -462,8 +462,8 @@ public struct Friend: Codable, Sendable, Hashable, Identifiable {
     public var presence: Presence?
 }
 
-/// The signed-in user.
-public struct User: Codable, Sendable, Hashable, Identifiable {
+/// The signed-in user's own profile (`me { self }`, a SelfUser): what only they see as well as their public fields.
+public struct SelfUser: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
     public var firstName: String?
