@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.18.0 (2026-10-12)
+## 0.19.0 (2026-10-12)
+
+(0.18.0 was the AudienceCable release on main; this release carries the sweep and includes it.)
 
 The pre-release breaking-change sweep (`PRE_RELEASE_SWEEP.md`, section 4): the Swift SDK's part of the contract the
 API breaks once, before the first release. Everything below is breaking; there are no deprecations or shims.
