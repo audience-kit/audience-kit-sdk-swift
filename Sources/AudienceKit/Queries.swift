@@ -12,7 +12,7 @@ public enum Queries {
     /// friends are there now.
     public static let personVenueFields = "id name photoUrl locale { id name } friends { list { nodes { id name facebookId presence } } }"
     /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
-    /// `venue` is the events facet: a display name ("To be announced" when there is none) and the venue, if any.
+    /// `venue` is the events mixin: a display name ("To be announced" when there is none) and the venue, if any.
     public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
 
     public static let audience = """
@@ -72,7 +72,7 @@ public enum Queries {
     """
 
     /// Records the user's position and says where that is: `venue` when they're in one, else `locale` and
-    /// its `nearbyVenues`, plus `audience` for its facets. Select the fields the app needs (with the facets it
+    /// its `nearbyVenues`, plus `audience` for its mixins. Select the fields the app needs (with the mixins it
     /// reads, such as `venue { friends { list { name } } }`) and decode the result yourself; `$position` is a
     /// ``Coordinates/graphQLValue``.
     public static func reportLocation(selecting fields: String) -> String {
@@ -204,22 +204,22 @@ public enum Queries {
     """
 }
 
-/// A connection read as `nodes { … }`: the facet lists (`venues { list }`, `cover { admissions }`) are connections.
+/// A connection read as `nodes { … }`: the mixin lists (`venues { list }`, `cover { admissions }`) are connections.
 struct Nodes<Element: Decodable & Sendable>: Decodable, Sendable { var nodes: [Element] }
 
 /// `venues { list { nodes } }` on the root, the audience.
 struct VenuesResponse: Decodable, Sendable {
-    struct Facet: Decodable, Sendable { var list: Nodes<Venue> }
+    struct Mixin: Decodable, Sendable { var list: Nodes<Venue> }
 
-    private var venues: Facet?
+    private var venues: Mixin?
     var list: [Venue] { venues?.list.nodes ?? [] }
 }
 
 /// `people { list { nodes } }` on the root, the audience.
 struct PeopleResponse: Decodable, Sendable {
-    struct Facet: Decodable, Sendable { var list: Nodes<Person> }
+    struct Mixin: Decodable, Sendable { var list: Nodes<Person> }
 
-    private var people: Facet?
+    private var people: Mixin?
     var list: [Person] { people?.list.nodes ?? [] }
 }
 

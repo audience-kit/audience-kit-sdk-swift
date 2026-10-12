@@ -220,7 +220,7 @@ private func makeClient(
         #expect(pageless.locale.cityNames == ["Seattle", "Capitol Hill"])
         #expect(pageless.locale.googlePlaceId == nil)
 
-        // Encoding writes the profile facet back, so a venue round-trips.
+        // Encoding writes the profile mixin back, so a venue round-trips.
         #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(venue)) == venue)
         #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(pageless)) == pageless)
 
@@ -302,7 +302,7 @@ private func makeClient(
         #expect(people.last?.homeVenue?.locale?.id == "l-1")
         #expect(people.last?.homeVenue?.friends?.first?.name == "Sam Okafor")
         #expect(people.last?.homeVenue?.friends?.first?.presence == .online)
-        // An event's venue comes in its facet, with a name even while it's to be announced.
+        // An event's venue comes in its mixin, with a name even while it's to be announced.
         #expect(people.last?.events?.first?.venue?.id == "v-1")
         #expect(people.last?.events?.last?.venue == nil)
         #expect(people.last?.events?.last?.venueName == "To be announced")
@@ -638,7 +638,7 @@ private func makeClient(
         #expect(stub.requests.map(\.path) == ["/v1/audience/\(audienceID)/staffql", "/v1/audience/\(audienceID)/staffql"])
     }
 
-    @Test func decodesAVenuesCoverFacet() async throws {
+    @Test func decodesAVenuesCoverMixin() async throws {
         let stub = Stub { request in
             let id = (try? request.jsonBody()["variables"] as? [String: String])?["id"]
             if id == "v-2" {
