@@ -772,17 +772,45 @@ public enum Presence: Sendable, Hashable, RawRepresentable, Codable {
 
 // MARK: - Cover
 
-/// What it costs to get into a venue on a night. Show ``totalCents``, the all-in price, and take it with
+/// An amount of money as the API sends it (GraphQL's `Money`): the minor unit and the currency, never a float.
+public struct Money: Codable, Sendable, Hashable {
+    /// The amount in the currency's minor unit (cents for dollars).
+    public let cents: Int
+    /// Its ISO 4217 code in lower case, e.g. `usd`.
+    public let currency: String
+
+    public init(cents: Int, currency: String) {
+        self.cents = cents
+        self.currency = currency
+    }
+}
+
+/// Someone as other people see them (GraphQL's `Profile`): the buyer on an ``Admission``, for the door.
+public struct Profile: Codable, Sendable, Hashable, Identifiable {
+    /// The user's ID, the same as their `User`'s.
+    public let id: String
+    /// Their display name: in full for themself, their friends and the audience's staff; first name and last
+    /// initial ("Aurora B.") for anyone else.
+    public let name: String
+    /// Their profile picture, as the API sends it. Use ``AudienceKitClient/url(for:)`` to resolve relative paths.
+    public let avatarUrl: String?
+
+    public init(id: String, name: String, avatarUrl: String? = nil) {
+        self.id = id
+        self.name = name
+        self.avatarUrl = avatarUrl
+    }
+}
+
+/// What it costs to get into a venue on a night. Show ``total``, the all-in price, and take it with
 /// ``AudienceKitClient/buyCover(venueID:)`` when ``payable`` is true; otherwise it's paid at the door.
 public struct CoverCharge: Codable, Sendable, Hashable {
-    /// The cover the venue receives, in cents.
-    public let amountCents: Int
-    /// What the buyer pays, all in, in cents.
-    public let totalCents: Int
-    /// The audience's fee in it, in cents; ``AudienceKitConfiguration/feeLabel`` names it for the person.
-    public let feeCents: Int
-    /// An ISO 4217 code in lower case, e.g. `usd`.
-    public let currency: String
+    /// The cover the venue receives.
+    public let amount: Money
+    /// The audience's fee in it; ``AudienceKitConfiguration/feeLabel`` names it for the person.
+    public let fee: Money
+    /// What the buyer pays, all in.
+    public let total: Money
     /// The night it is for, as `yyyy-MM-dd`. A night runs 6am to 6am, so 1am Saturday is Friday night.
     public let night: String
     /// When the cover starts, as `HH:MM` local time, e.g. `21:00`.
@@ -792,13 +820,12 @@ public struct CoverCharge: Codable, Sendable, Hashable {
     /// The event that night, when it sets the night's cover.
     public let event: CoverEvent?
 
-    public init(amountCents: Int, totalCents: Int, feeCents: Int, currency: String, night: String,
-                from: String? = nil, payable: Bool, event: CoverEvent? = nil)
+    public init(amount: Money, fee: Money, total: Money, night: String, from: String? = nil, payable: Bool,
+                event: CoverEvent? = nil)
     {
-        self.amountCents = amountCents
-        self.totalCents = totalCents
-        self.feeCents = feeCents
-        self.currency = currency
+        self.amount = amount
+        self.fee = fee
+        self.total = total
         self.night = night
         self.from = from
         self.payable = payable
@@ -851,11 +878,10 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
     public let status: AdmissionStatus
     /// The night, as `yyyy-MM-dd`.
     public let night: String
-    /// The cover, in cents.
-    public let amountCents: Int
-    /// What the buyer paid, in cents.
-    public let totalCents: Int
-    public let currency: String
+    /// The cover.
+    public let amount: Money
+    /// What the buyer paid.
+    public let total: Money
     /// Whether the buyer can refund it themselves: paid, not scanned in, and the night isn't over.
     public let isRefundable: Bool
     /// The Base64 key the pass QR code is made with. The buyer only.
@@ -864,36 +890,31 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
     public let scanCount: Int
     /// When the door first scanned it.
     public let checkedInAt: Date?
-    /// The buyer's name and profile photo, for the door.
-    public let userName: String?
-    public let userPhotoUrl: String?
+    /// The buyer: their name for the door, their picture so the door can match faces.
+    public let profile: Profile
     public let venue: CoverVenue
     public let event: CoverEvent?
 
-    public init(id: String, status: AdmissionStatus, night: String, amountCents: Int, totalCents: Int,
-                currency: String, isRefundable: Bool = false, passSecret: String? = nil, scanCount: Int = 0,
-                checkedInAt: Date? = nil, userName: String? = nil, userPhotoUrl: String? = nil, venue: CoverVenue,
-                event: CoverEvent? = nil)
+    public init(id: String, status: AdmissionStatus, night: String, amount: Money, total: Money,
+                isRefundable: Bool = false, passSecret: String? = nil, scanCount: Int = 0, checkedInAt: Date? = nil,
+                profile: Profile, venue: CoverVenue, event: CoverEvent? = nil)
     {
         self.id = id
         self.status = status
         self.night = night
-        self.amountCents = amountCents
-        self.totalCents = totalCents
-        self.currency = currency
+        self.amount = amount
+        self.total = total
         self.isRefundable = isRefundable
         self.passSecret = passSecret
         self.scanCount = scanCount
         self.checkedInAt = checkedInAt
-        self.userName = userName
-        self.userPhotoUrl = userPhotoUrl
+        self.profile = profile
         self.venue = venue
         self.event = event
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, status, night, amountCents, totalCents, currency, isRefundable, passSecret, scanCount, checkedInAt
-        case userName, userPhotoUrl, venue, event
+        case id, status, night, amount, total, isRefundable, passSecret, scanCount, checkedInAt, profile, venue, event
     }
 
     /// Reads `checkedInAt` as the ISO 8601 string the API sends, whatever the decoder's date strategy.
@@ -902,15 +923,13 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
         id = try container.decode(String.self, forKey: .id)
         status = try container.decode(AdmissionStatus.self, forKey: .status)
         night = try container.decode(String.self, forKey: .night)
-        amountCents = try container.decode(Int.self, forKey: .amountCents)
-        totalCents = try container.decode(Int.self, forKey: .totalCents)
-        currency = try container.decode(String.self, forKey: .currency)
+        amount = try container.decode(Money.self, forKey: .amount)
+        total = try container.decode(Money.self, forKey: .total)
         isRefundable = try container.decode(Bool.self, forKey: .isRefundable)
         passSecret = try container.decodeIfPresent(String.self, forKey: .passSecret)
         scanCount = try container.decode(Int.self, forKey: .scanCount)
         checkedInAt = try container.decodeISO8601IfPresent(forKey: .checkedInAt)
-        userName = try container.decodeIfPresent(String.self, forKey: .userName)
-        userPhotoUrl = try container.decodeIfPresent(String.self, forKey: .userPhotoUrl)
+        profile = try container.decode(Profile.self, forKey: .profile)
         venue = try container.decode(CoverVenue.self, forKey: .venue)
         event = try container.decodeIfPresent(CoverEvent.self, forKey: .event)
     }
@@ -920,15 +939,13 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
         try container.encode(id, forKey: .id)
         try container.encode(status, forKey: .status)
         try container.encode(night, forKey: .night)
-        try container.encode(amountCents, forKey: .amountCents)
-        try container.encode(totalCents, forKey: .totalCents)
-        try container.encode(currency, forKey: .currency)
+        try container.encode(amount, forKey: .amount)
+        try container.encode(total, forKey: .total)
         try container.encode(isRefundable, forKey: .isRefundable)
         try container.encodeIfPresent(passSecret, forKey: .passSecret)
         try container.encode(scanCount, forKey: .scanCount)
         try container.encodeIfPresent(checkedInAt.map(ISO8601.string(from:)), forKey: .checkedInAt)
-        try container.encodeIfPresent(userName, forKey: .userName)
-        try container.encodeIfPresent(userPhotoUrl, forKey: .userPhotoUrl)
+        try container.encode(profile, forKey: .profile)
         try container.encode(venue, forKey: .venue)
         try container.encodeIfPresent(event, forKey: .event)
     }
@@ -1044,14 +1061,14 @@ public struct DoorNight: Codable, Sendable, Hashable {
     public let paidCount: Int
     /// Paid covers scanned in.
     public let checkedInCount: Int
-    /// Covers paid and not refunded, in cents, before fees.
-    public let grossCents: Int
+    /// Covers paid and not refunded, before fees.
+    public let gross: Money
 
-    public init(night: String, paidCount: Int, checkedInCount: Int, grossCents: Int) {
+    public init(night: String, paidCount: Int, checkedInCount: Int, gross: Money) {
         self.night = night
         self.paidCount = paidCount
         self.checkedInCount = checkedInCount
-        self.grossCents = grossCents
+        self.gross = gross
     }
 }
 

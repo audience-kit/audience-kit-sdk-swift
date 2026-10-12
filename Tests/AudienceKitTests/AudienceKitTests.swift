@@ -500,16 +500,19 @@ private func makeClient(
         #expect(person.events?.first?.venueName == "To be announced")
         #expect(try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(person)) == person)
 
-        let admission = Admission(id: "ad-1", status: .paid, night: "2026-10-09", amountCents: 1000, totalCents: 1112,
-                                  currency: "usd", venue: CoverVenue(id: "v-1", name: "Pony"))
+        let usd = { (cents: Int) in Money(cents: cents, currency: "usd") }
+        let admission = Admission(id: "ad-1", status: .paid, night: "2026-10-09", amount: usd(1000), total: usd(1112),
+                                  profile: Profile(id: "u-1", name: "Rick M."),
+                                  venue: CoverVenue(id: "v-1", name: "Pony"))
         let cover = VenueCover(id: "v-1", name: "Pony",
-                               coverCharge: CoverCharge(amountCents: 1000, totalCents: 1112, feeCents: 112,
-                                                        currency: "usd", night: "2026-10-09", payable: true),
+                               coverCharge: CoverCharge(amount: usd(1000), fee: usd(112), total: usd(1112),
+                                                        night: "2026-10-09", payable: true),
                                viewerAdmission: admission)
         #expect(cover.viewerAdmission?.status == .paid)
+        #expect(cover.coverCharge?.total == Money(cents: 1112, currency: "usd"))
         #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
         #expect(DoorVenue(id: "v-1", door: DoorNight(night: "2026-10-09", paidCount: 1, checkedInCount: 0,
-                                                       grossCents: 1000)).door?.paidCount == 1)
+                                                       gross: usd(1000))).door?.paidCount == 1)
     }
 
     @Test func decodesAPersonsPlainEventsAndRoundTripsTheirInvolvements() throws {
@@ -550,7 +553,8 @@ private func makeClient(
         let (client, _) = makeClient(stub)
 
         do {
-            _ = try await client.graphQL("{ nope }", as: [String: GraphQLValue].self)
+            // The document is a real one; what's under test is how the stub's answer comes back.
+            _ = try await client.graphQL("{ id }", as: [String: GraphQLValue].self)
             Issue.record("expected an error")
         } catch let error as AudienceKitError {
             // The code is whatever the API sent, known to the SDK or not.
@@ -565,14 +569,15 @@ private func makeClient(
     @Test func carriesTheAPIsErrorCodeAndFields() async throws {
         let stub = Stub { _ in
             .json(status: 200, body: #"""
-            {"data":null,"errors":[{"message":"Name can't be blank","path":["updateVenue"],
+            {"data":null,"errors":[{"message":"Name can't be blank","path":["rsvpEvent"],
               "extensions":{"code":"INVALID","fields":{"name":["can't be blank"],"order":"must be a number"}}}]}
             """#)
         }
         let (client, _) = makeClient(stub)
 
         do {
-            _ = try await client.graphQL("mutation { updateVenue { id } }", as: [String: GraphQLValue].self)
+            let document = "mutation { rsvpEvent(input: { eventId: \"e-1\", state: ATTENDING }) { event { id } } }"
+            _ = try await client.graphQL(document, as: [String: GraphQLValue].self)
             Issue.record("expected an error")
         } catch let error as AudienceKitError {
             #expect(error.code == AudienceKitError.Code.invalid)
@@ -821,7 +826,8 @@ private func makeClient(
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let payload = try await client.graphQL("{ when }", as: Payload.self, decoder: decoder)
+        // Aliases, so the document is one the schema knows while the stub answers what the decoder is given.
+        let payload = try await client.graphQL("{ when: name }", as: Payload.self, decoder: decoder)
 
         #expect(payload.when == Date(timeIntervalSince1970: 1_791_316_800))
     }
@@ -833,7 +839,7 @@ private func makeClient(
         }
         let (client, _) = makeClient(stub)
 
-        let payload = try await client.graphQL("{ when later }", as: Payload.self)
+        let payload = try await client.graphQL("{ when: name later: subdomain }", as: Payload.self)
 
         #expect(payload.when == Date(timeIntervalSince1970: 1_791_316_800.5))
         #expect(payload.later == Date(timeIntervalSince1970: 1_791_316_800))
@@ -889,9 +895,10 @@ private func makeClient(
 
 @Suite struct Cover {
     static let admission = #"""
-    {"id":"7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b","status":"PENDING","night":"2026-10-09","amountCents":1000,
-     "totalCents":1112,"currency":"usd","isRefundable":false,"passSecret":"c2VjcmV0LWtleS1mb3ItaG90LW1lc3MtY292ZXI=",
-     "scanCount":1,"checkedInAt":"2026-10-10T04:41:00.500Z","userName":"Rick Mark","userPhotoUrl":null,
+    {"id":"7d9f2c1e-3b4a-4e5f-8a6b-1c2d3e4f5a6b","status":"PENDING","night":"2026-10-09",
+     "amount":{"cents":1000,"currency":"usd"},"total":{"cents":1112,"currency":"usd"},
+     "isRefundable":false,"passSecret":"c2VjcmV0LWtleS1mb3ItaG90LW1lc3MtY292ZXI=",
+     "scanCount":1,"checkedInAt":"2026-10-10T04:41:00.500Z","profile":{"id":"u-1","name":"Rick Mark","avatarUrl":null},
      "venue":{"id":"v-1","name":"The Stud","photoUrl":null},"event":null}
     """#
 
@@ -912,7 +919,9 @@ private func makeClient(
         #expect(purchase.paymentIntentClientSecret == "pi_1_secret_2")
         #expect(purchase.stripeAccountId == "acct_1")
         #expect(purchase.admission.status == .pending)
-        #expect(purchase.admission.totalCents == 1112)
+        #expect(purchase.admission.total == Money(cents: 1112, currency: "usd"))
+        #expect(purchase.admission.amount.cents == 1000)
+        #expect(purchase.admission.profile.name == "Rick Mark")
         #expect(purchase.admission.venue.name == "The Stud")
         #expect(purchase.admission.checkedInAt == Date(timeIntervalSince1970: 1_791_607_260.5))
         #expect(try #require(stub.requests.first).jsonBody()["variables"] as? [String: String] == ["venueId": "v-1"])
@@ -953,7 +962,8 @@ private func makeClient(
             if operation == "DoorVenues" {
                 return .json(status: 200, body: #"""
                 {"data":{"me":{"cover":{"doorVenues":{"nodes":[{"id":"v-1","name":"The Stud","photoUrl":null,
-                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,"grossCents":12000}}}}]}}}}}
+                  "tickets":{"cover":{"door":{"night":"2026-10-09","paidCount":12,"checkedInCount":8,
+                  "gross":{"cents":12000,"currency":"usd"}}}}}]}}}}}
                 """#)
             }
             return .json(status: 200, body: #"""
@@ -966,6 +976,7 @@ private func makeClient(
         let venues = try await client.doorVenues()
         #expect(venues.first?.door?.paidCount == 12)
         #expect(venues.first?.door?.checkedInCount == 8)
+        #expect(venues.first?.door?.gross == Money(cents: 12000, currency: "usd"))
 
         let result = try await client.scanAdmission(venueID: "v-1", code: "HMC1.a.1.b")
         #expect(result.outcome == .reEntry)
@@ -985,8 +996,8 @@ private func makeClient(
             }
             return .json(status: 200, body: #"""
             {"data":{"venues":{"venue":{"id":"v-1","name":"The Stud","tickets":{"cover":{
-              "charge":{"amountCents":1000,"totalCents":1112,"feeCents":112,"currency":"usd","night":"2026-10-09",
-                "from":"21:00","payable":true,"event":null},
+              "charge":{"amount":{"cents":1000,"currency":"usd"},"fee":{"cents":112,"currency":"usd"},
+                "total":{"cents":1112,"currency":"usd"},"night":"2026-10-09","from":"21:00","payable":true,"event":null},
               "viewerAdmission":\#(Self.admission)}}}}}}
             """#)
         }
@@ -994,7 +1005,8 @@ private func makeClient(
 
         let coverResponse = try await client.venueCover(venueID: "v-1")
         let cover = try #require(coverResponse)
-        #expect(cover.coverCharge?.totalCents == 1112)
+        #expect(cover.coverCharge?.total.cents == 1112)
+        #expect(cover.coverCharge?.fee == Money(cents: 112, currency: "usd"))
         #expect(cover.coverCharge?.payable == true)
         #expect(cover.viewerAdmission?.status == .pending)
         #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
@@ -1035,12 +1047,14 @@ private func makeClient(
         let configuration = AudienceKitConfiguration(baseURL: URL(string: "https://api.example")!,
                                                      coverPassPrefix: "XYZ1", feeLabel: "Hot Mess fee")
         let client = AudienceKitClient(configuration: configuration)
-        let admission = Admission(id: id, status: .paid, night: "2026-10-09", amountCents: 1000, totalCents: 1112,
-                                  currency: "usd", passSecret: secret, venue: CoverVenue(id: "v-1"))
+        let usd = Money(cents: 1000, currency: "usd")
+        let buyer = Profile(id: "u-1", name: "Rick M.")
+        let admission = Admission(id: id, status: .paid, night: "2026-10-09", amount: usd, total: usd,
+                                  passSecret: secret, profile: buyer, venue: CoverVenue(id: "v-1"))
         #expect(client.coverPassCode(for: admission, at: start)?.hasPrefix("XYZ1.") == true)
-        #expect(client.coverPassCode(for: Admission(id: id, status: .paid, night: "2026-10-09", amountCents: 1000,
-                                                    totalCents: 1112, currency: "usd", venue: CoverVenue(id: "v-1")),
-                                     at: start) == nil)
+        let withoutSecret = Admission(id: id, status: .paid, night: "2026-10-09", amount: usd, total: usd,
+                                      profile: buyer, venue: CoverVenue(id: "v-1"))
+        #expect(client.coverPassCode(for: withoutSecret, at: start) == nil)
         #expect(configuration.feeLabel == "Hot Mess fee")
     }
     #endif

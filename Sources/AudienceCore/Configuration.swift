@@ -72,7 +72,7 @@ public struct AudienceKitConfiguration: Sendable, Hashable {
     /// the door checks. ``AudienceKit/CoverPass/defaultPrefix`` unless the audience has its own.
     public var coverPassPrefix: String
 
-    /// What to call the audience's fee on a cover charge (`feeCents`) when showing the person the price breakdown,
+    /// What to call the audience's fee on a cover charge (its `fee`) when showing the person the price breakdown,
     /// e.g. "Hot Mess fee".
     public var feeLabel: String
 

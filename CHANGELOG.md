@@ -44,9 +44,16 @@ Pairs with API version `2026-10-11`, which the SDK sends as `X-AudienceKit-API-V
 - Every model field is `let`; every model has a public memberwise initializer (`Venue(id:name:hidden:order:…)`,
   `Person(id:name:…)`, `Admission(id:status:night:…)`, `VenueCover(id:name:coverCharge:viewerAdmission:)`, …).
 - Nullability follows the schema: `Venue.name`/`Person.name` are the records' own names (nullable, with `name` falling
-  back to the Page's), `Admission.venue` is non-optional, `Admission.checkedInAt`, `userName`, `userPhotoUrl`,
-  `passSecret`, `event` stay optional; fields the SDK's query may leave out (`tags`, `locales`, `presence`, …) are
-  optional and nil when not asked. `VenueCover`/`DoorVenue` properties are read-only.
+  back to the Page's), `Admission.venue` and `profile` are non-optional, `Admission.checkedInAt`, `passSecret`,
+  `event` stay optional; fields the SDK's query may leave out (`tags`, `locales`, `presence`, …) are optional and nil
+  when not asked. `VenueCover`/`DoorVenue` properties are read-only.
+- `Money { cents, currency }` replaces every cents field, as the API's wave 1 shipped it: `CoverCharge.amount`,
+  `fee` and `total` (`amountCents`, `feeCents`, `totalCents` and `currency` are gone), `Admission.amount` and
+  `total`, `DoorNight.gross`. `Admission.profile: Profile` (`id`, `name`, `avatarUrl`) replaces `userName` and
+  `userPhotoUrl`. The SDK's documents select `amount { cents currency }` and friends, and `profile { id name
+  avatarUrl }`.
+- The door documents (`doorVenues`, `venueDoor`, `scanAdmission`) are marked `# endpoint: staff`, which is where
+  they go, so the API's document checker validates them against the staff schema.
 
 ### Session and surface (4.5)
 
@@ -81,8 +88,6 @@ Pairs with API version `2026-10-11`, which the SDK sends as `X-AudienceKit-API-V
 - REST error bodies `{ "error": "<code>", "message": "…" }` become coded errors; a 400 `unsupported_api_version`
   is `UNSUPPORTED_API_VERSION`.
 
-Money as `Money { cents, currency }` is not in this release: cents fields wait for the API's wave 1.
-
 ### Migrating hot_mess_ios
 
 | Before | After |
@@ -101,6 +106,9 @@ Money as `Money { cents, currency }` is not in this release: cents fields wait f
 | `audienceKit.sessionEvents` iterated once | iterate anywhere; each access is a subscription |
 | `Presence` fallback `.offline` | `.unknown(value)`; use `isReachable` |
 | `CoverPass.code(admissionID:secret:)` | unchanged (prefix `HMC1`), or `audienceKit.coverPassCode(for:)` |
+| `admission.totalCents`, `charge.feeCents`, `.currency` | `admission.total.cents`, `charge.fee.cents`, `total.currency` |
+| `admission.userName`, `admission.userPhotoUrl` | `admission.profile.name`, `admission.profile.avatarUrl` |
+| `door.grossCents` | `door.gross.cents` |
 | `AudienceCable(url:token:openSocket:)` rewriting the handshake to `Bearer` | `audienceKit.makeCable()` (or `AudienceCable(configuration:credential:)`); drop the handshake wrapper |
 | `Authorization: JWT` on your own SSE stream | `request.setAudienceKitHeaders(token: sessionToken)` |
 

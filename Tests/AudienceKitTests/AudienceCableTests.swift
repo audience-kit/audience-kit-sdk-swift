@@ -103,7 +103,7 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let staging = AudienceKitConfiguration(baseURL: URL(string: "https://api.test")!, environment: .staging)
         let cable = AudienceCable(configuration: staging, url: URL(string: "ws://localhost:3000/connection")!,
                                   credential: { credential("session-jwt") }, openSocket: { sockets.open($0) })
-        let stream = await cable.subscribe(query: "subscription A { a }", audienceID: "aud")
+        let stream = await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "aud")
         let socket = try #require(sockets.all.first)
         #expect(socket.request.url?.absoluteString == "ws://localhost:3000/connection")
         #expect(socket.request.value(forHTTPHeaderField: "Authorization") == "Bearer session-jwt")
@@ -133,8 +133,11 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let cable = AudienceCable(configuration: configuration, endpoint: .staff,
                                   credential: { credential("session-jwt", staff: true) },
                                   openSocket: { sockets.open($0) })
-        var events = await cable.subscribe(query: "subscription StaffDoor($id: ID!) { door(venueId: $id) { __typename } }",
-                                           variables: ["id": .string("v1")], operationName: "StaffDoor",
+        let door = """
+        # endpoint: staff
+        subscription StaffDoor($id: ID!) { door(venueId: $id) { __typename } }
+        """
+        var events = await cable.subscribe(query: door, variables: ["id": .string("v1")], operationName: "StaffDoor",
                                            audienceID: "aud").makeAsyncIterator()
         let first = try #require(sockets.all.first)
         // The socket opens on the API the credential names, dressed like every other call.
@@ -235,8 +238,8 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let sockets = Sockets()
         let cable = AudienceCable(configuration: configuration, silenceLimit: .milliseconds(200),
                                   credential: { credential("session-jwt") }, openSocket: { sockets.open($0) })
-        var chat = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
-        var notifications = await cable.subscribe(query: "subscription B { b }", audienceID: "aud").makeAsyncIterator()
+        var chat = await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "aud").makeAsyncIterator()
+        var notifications = await cable.subscribe(query: "subscription B { venueChat(venueId: \"v1\") { __typename } }", audienceID: "aud").makeAsyncIterator()
         let first = try #require(sockets.all.first)
         first.push(#"{"type":"welcome"}"#)
         try await eventually { first.commands("subscribe").count == 2 }
@@ -261,10 +264,10 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let cable = AudienceCable(configuration: configuration, credential: { credential("session-jwt") },
                                   openSocket: { sockets.open($0) })
         let first = Task {
-            for await _ in await cable.subscribe(query: "subscription A { a }", audienceID: "aud") {}
+            for await _ in await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "aud") {}
         }
         let second = Task {
-            for await _ in await cable.subscribe(query: "subscription B { b }", audienceID: "aud") {}
+            for await _ in await cable.subscribe(query: "subscription B { venueChat(venueId: \"v1\") { __typename } }", audienceID: "aud") {}
         }
         try await eventually { sockets.all.count == 1 }
         let socket = sockets.all[0]
@@ -285,7 +288,7 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
     @Test func aRejectedChannelEndsOnlyItsOperation() async throws {
         let sockets = Sockets()
         let cable = AudienceCable(configuration: configuration, credential: { nil }, openSocket: { sockets.open($0) })
-        var refused = await cable.subscribe(query: "subscription A { a }", audienceID: "other").makeAsyncIterator()
+        var refused = await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "other").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
         // No credential: the configured API, unsigned.
         #expect(socket.request.url?.absoluteString == "wss://api.test/connection")
@@ -304,8 +307,8 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let refused = Refusals()
         let cable = AudienceCable(configuration: configuration, credential: { credential("revoked-jwt") },
                                   unauthorized: { refused.record($0) }, openSocket: { sockets.open($0) })
-        var chat = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
-        var notifications = await cable.subscribe(query: "subscription B { b }", audienceID: "aud").makeAsyncIterator()
+        var chat = await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "aud").makeAsyncIterator()
+        var notifications = await cable.subscribe(query: "subscription B { venueChat(venueId: \"v1\") { __typename } }", audienceID: "aud").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
         socket.push(#"{"type":"disconnect","reason":"unauthorized","reconnect":false}"#)
         guard case .disconnected(let reason, let reconnects)? = await chat.next() else { Issue.record("no disconnect"); return }
@@ -324,7 +327,7 @@ private func credential(_ token: String, staff: Bool = false) -> Credential {
         let refused = Refusals()
         let cable = AudienceCable(configuration: configuration, credential: { credential("session-jwt") },
                                   unauthorized: { refused.record($0) }, openSocket: { sockets.open($0) })
-        var events = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
+        var events = await cable.subscribe(query: "subscription A { myNotifications { notificationId } }", audienceID: "aud").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
         socket.push(#"{"type":"disconnect","reason":"server_restart","reconnect":false}"#)
         guard case .disconnected? = await events.next() else { Issue.record("no disconnect"); return }

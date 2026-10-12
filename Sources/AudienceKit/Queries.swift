@@ -106,14 +106,18 @@ enum Queries {
     }
     """
 
+    /// A ``Money``.
+    static let moneyFields = "cents currency"
     /// A ``CoverCharge``.
-    static let coverChargeFields = "amountCents totalCents feeCents currency night from payable event { id name }"
-    /// An ``Admission``, with the pass secret the buyer makes the QR code from.
-    static let admissionFields = """
-    id status night amountCents totalCents currency isRefundable passSecret scanCount checkedInAt \
-    userName userPhotoUrl venue { id name photoUrl } event { id name }
+    static let coverChargeFields = """
+    amount { \(moneyFields) } fee { \(moneyFields) } total { \(moneyFields) } night from payable event { id name }
     """
-    static let doorNightFields = "night paidCount checkedInCount grossCents"
+    /// An ``Admission``: the pass secret the buyer makes the QR code from, and the buyer's ``Profile`` for the door.
+    static let admissionFields = """
+    id status night amount { \(moneyFields) } total { \(moneyFields) } isRefundable passSecret scanCount checkedInAt \
+    profile { id name avatarUrl } venue { id name photoUrl } event { id name }
+    """
+    static let doorNightFields = "night paidCount checkedInCount gross { \(moneyFields) }"
 
     static let venueCover = """
     query VenueCover($id: ID!) {
@@ -137,13 +141,17 @@ enum Queries {
     }
     """
 
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
     static let doorVenues = """
+    # endpoint: staff
     query DoorVenues {
       me { cover { doorVenues { nodes { id name photoUrl tickets { cover { door { \(doorNightFields) } } } } } } }
     }
     """
 
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
     static let venueDoor = """
+    # endpoint: staff
     query VenueDoor($id: ID!, $night: ISO8601Date) {
       venues { venue(id: $id) { id name photoUrl tickets { cover { door(night: $night) { \(doorNightFields) } } } } }
     }
@@ -178,7 +186,9 @@ enum Queries {
     }
     """
 
+    /// Staff work: sent to ``GraphQLEndpoint/staff``.
     static let scanAdmission = """
+    # endpoint: staff
     mutation ScanAdmission($venueId: ID!, $code: String!) {
       scanAdmission(input: { venueId: $venueId, code: $code }) {
         result { outcome message admission { \(admissionFields) } }
