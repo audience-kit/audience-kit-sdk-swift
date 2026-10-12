@@ -364,6 +364,37 @@ private func makeClient(
         #expect(audience.theme?.light == [ThemeToken(name: "accent", value: "#9c1c62")])
     }
 
+    @Test func buildsModelsByHandAndRoundTripsThem() throws {
+        // Every model has a public memberwise initializer, so apps and previews can make one without JSON.
+        let locale = AudienceLocale(id: "l-1", name: "Seattle", label: "SEA", googlePlaceId: "ChIJ-sea")
+        let venue = Venue(id: "v-1", name: nil, hidden: false, order: 1, page: Page(id: "p-1", name: "Pony"),
+                          locale: locale, location: Location(id: "loc-1", point: "POINT (-122.3 47.6)"),
+                          tags: [Tag(id: "t-1", name: "Leather")])
+        #expect(venue.name == "Pony")
+        #expect(venue.location?.coordinate == Coordinate(latitude: 47.6, longitude: -122.3))
+        #expect(try JSONDecoder().decode(Venue.self, from: JSONEncoder().encode(venue)) == venue)
+
+        let event = PersonEvent(id: "e-1", name: "Bingo", venueName: "To be announced")
+        let person = Person(id: "pe-1", name: "DJ Nobody", page: nil,
+                            homeVenue: PersonVenue(id: "v-1", name: "Pony", locale: locale),
+                            events: [event], eventInvolvements: [PersonEventInvolvement(event: event, role: "host")])
+        #expect(person.name == "DJ Nobody")
+        #expect(person.events?.first?.venue == nil)
+        #expect(person.events?.first?.venueName == "To be announced")
+        #expect(try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(person)) == person)
+
+        let admission = Admission(id: "ad-1", status: .paid, night: "2026-10-09", amountCents: 1000, totalCents: 1112,
+                                  currency: "usd", venue: CoverVenue(id: "v-1", name: "Pony"))
+        let cover = VenueCover(id: "v-1", name: "Pony",
+                               coverCharge: CoverCharge(amountCents: 1000, totalCents: 1112, feeCents: 112,
+                                                        currency: "usd", night: "2026-10-09", payable: true),
+                               viewerAdmission: admission)
+        #expect(cover.viewerAdmission?.status == .paid)
+        #expect(try JSONDecoder().decode(VenueCover.self, from: JSONEncoder().encode(cover)) == cover)
+        #expect(DoorVenue(id: "v-1", door: DoorNight(night: "2026-10-09", paidCount: 1, checkedInCount: 0,
+                                                       grossCents: 1000)).door?.paidCount == 1)
+    }
+
     @Test func decodesAPersonsPlainEventsAndRoundTripsTheirInvolvements() throws {
         let plain = #"""
         {"id":"pe-1","order":1,"global":false,"likeRequired":false,"venues":{"home":null},
@@ -697,7 +728,7 @@ private func makeClient(
         #expect(purchase.stripeAccountId == "acct_1")
         #expect(purchase.admission.status == .pending)
         #expect(purchase.admission.totalCents == 1112)
-        #expect(purchase.admission.venue?.name == "The Stud")
+        #expect(purchase.admission.venue.name == "The Stud")
         #expect(try #require(stub.requests.first).jsonBody()["variables"] as? [String: String] == ["venueId": "v-1"])
 
         let admission = try await client.confirmCover(admissionID: purchase.admission.id)
