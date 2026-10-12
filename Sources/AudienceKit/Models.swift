@@ -132,23 +132,21 @@ struct ListingProfile: Codable, Sendable, Hashable {
 /// A place: a Google place with a point.
 public struct Location: Codable, Sendable, Hashable, Identifiable {
     public let id: String
-    /// The point as the API serializes it (WKT, e.g. `POINT (-122.42 37.77)`).
-    public let point: String?
+    /// Where it is: the API's `point` (a `Geography`, WKT on the wire) as latitude and longitude. Nil when the place
+    /// has no point, or the point isn't one (a boundary, say).
+    public let coordinate: Coordinate?
     /// Its Google place ID, when an admin or the researcher has set one: the API's `places { placeId }`.
     public let googlePlaceId: String?
     /// Its full address, when known.
     public let address: String?
 
-    /// ``point`` parsed into latitude and longitude, when it is a WKT point.
-    public var coordinate: Coordinate? { point.flatMap(Coordinate.init(wkt:)) }
-
     private enum CodingKeys: String, CodingKey {
         case id, point, address, places
     }
 
-    public init(id: String, point: String? = nil, googlePlaceId: String? = nil, address: String? = nil) {
+    public init(id: String, coordinate: Coordinate? = nil, googlePlaceId: String? = nil, address: String? = nil) {
         self.id = id
-        self.point = point
+        self.coordinate = coordinate
         self.googlePlaceId = googlePlaceId
         self.address = address
     }
@@ -156,7 +154,7 @@ public struct Location: Codable, Sendable, Hashable, Identifiable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        point = try container.decodeIfPresent(String.self, forKey: .point)
+        coordinate = try container.decodeIfPresent(String.self, forKey: .point).flatMap(Coordinate.init(wkt:))
         address = try container.decodeIfPresent(String.self, forKey: .address)
         googlePlaceId = try container.decodeIfPresent(ListingProfile.Places.self, forKey: .places)?.placeId
     }
@@ -165,7 +163,7 @@ public struct Location: Codable, Sendable, Hashable, Identifiable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
-        try container.encodeIfPresent(point, forKey: .point)
+        try container.encodeIfPresent(coordinate?.wkt, forKey: .point)
         try container.encodeIfPresent(address, forKey: .address)
         if let googlePlaceId {
             try container.encode(ListingProfile.Places(placeId: googlePlaceId), forKey: .places)
@@ -513,8 +511,8 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
 public struct PersonEvent: Codable, Sendable, Hashable, Identifiable {
     public let id: String
     public let name: String?
-    /// ISO 8601.
-    public let startAt: String?
+    /// When it starts; nil when not scheduled yet, or when the query didn't ask.
+    public let startAt: Date?
     /// Its venue's locale, or its series' while the venue is still to be announced.
     public let locale: AudienceLocale?
     /// The audience's tags on it, by name; nil when the query didn't ask.
@@ -528,11 +526,7 @@ public struct PersonEvent: Codable, Sendable, Hashable, Identifiable {
     /// Its venue's name as the API shows it, e.g. "To be announced" when there is none; nil when the query didn't ask.
     public var venueName: String? { venueMixin?.name }
 
-    public var startDate: Date? {
-        startAt.flatMap(ISO8601.date(from:))
-    }
-
-    public init(id: String, name: String? = nil, startAt: String? = nil, locale: AudienceLocale? = nil,
+    public init(id: String, name: String? = nil, startAt: Date? = nil, locale: AudienceLocale? = nil,
                 venue: PersonVenue? = nil, venueName: String? = nil, tags: [Tag]? = nil)
     {
         self.id = id
@@ -551,6 +545,39 @@ public struct PersonEvent: Codable, Sendable, Hashable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, name, startAt, locale, tags
         case venueMixin = "venue"
+    }
+
+    /// Reads `startAt` as the ISO 8601 string the API sends, whatever the decoder's date strategy.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        startAt = try container.decodeISO8601IfPresent(forKey: .startAt)
+        locale = try container.decodeIfPresent(AudienceLocale.self, forKey: .locale)
+        tags = try container.decodeIfPresent([Tag].self, forKey: .tags)
+        venueMixin = try container.decodeIfPresent(VenueMixin.self, forKey: .venueMixin)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(startAt.map(ISO8601.string(from:)), forKey: .startAt)
+        try container.encodeIfPresent(locale, forKey: .locale)
+        try container.encodeIfPresent(tags, forKey: .tags)
+        try container.encodeIfPresent(venueMixin, forKey: .venueMixin)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// An `ISO8601DateTime` field: a string, parsed whatever the decoder's date strategy; nil when null or absent.
+    func decodeISO8601IfPresent(forKey key: Key) throws -> Date? {
+        guard let text = try decodeIfPresent(String.self, forKey: key) else { return nil }
+        guard let date = ISO8601.date(from: text) else {
+            throw DecodingError.dataCorruptedError(forKey: key, in: self,
+                                                   debugDescription: "\(text) isn't an ISO 8601 date")
+        }
+        return date
     }
 }
 
@@ -649,29 +676,6 @@ public struct Node: Codable, Sendable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case typename = "__typename"
-    }
-}
-
-/// A device's position, for the GraphQL `CoordinatesInput`. A beacon's major value names a locale.
-public struct Coordinates: Sendable, Hashable {
-    public let latitude: Double
-    public let longitude: Double
-    public let beaconMajor: Int?
-    public let beaconMinor: Int?
-
-    public init(latitude: Double, longitude: Double, beaconMajor: Int? = nil, beaconMinor: Int? = nil) {
-        self.latitude = latitude
-        self.longitude = longitude
-        self.beaconMajor = beaconMajor
-        self.beaconMinor = beaconMinor
-    }
-
-    /// The value to pass as a `CoordinatesInput` variable. Zero beacon values mean no beacon.
-    public var graphQLValue: GraphQLValue {
-        var object: [String: GraphQLValue] = ["latitude": .double(latitude), "longitude": .double(longitude)]
-        if let beaconMajor, beaconMajor != 0 { object["beaconMajor"] = .int(beaconMajor) }
-        if let beaconMinor, beaconMinor != 0 { object["beaconMinor"] = .int(beaconMinor) }
-        return .object(object)
     }
 }
 
@@ -775,7 +779,7 @@ public struct CoverCharge: Codable, Sendable, Hashable {
     public let amountCents: Int
     /// What the buyer pays, all in, in cents.
     public let totalCents: Int
-    /// The audience's fee in it, in cents.
+    /// The audience's fee in it, in cents; ``AudienceKitConfiguration/feeLabel`` names it for the person.
     public let feeCents: Int
     /// An ISO 4217 code in lower case, e.g. `usd`.
     public let currency: String
@@ -858,8 +862,8 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
     public let passSecret: String?
     /// How many times the door has scanned it.
     public let scanCount: Int
-    /// When the door first scanned it, ISO 8601.
-    public let checkedInAt: String?
+    /// When the door first scanned it.
+    public let checkedInAt: Date?
     /// The buyer's name and profile photo, for the door.
     public let userName: String?
     public let userPhotoUrl: String?
@@ -868,7 +872,7 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
 
     public init(id: String, status: AdmissionStatus, night: String, amountCents: Int, totalCents: Int,
                 currency: String, isRefundable: Bool = false, passSecret: String? = nil, scanCount: Int = 0,
-                checkedInAt: String? = nil, userName: String? = nil, userPhotoUrl: String? = nil, venue: CoverVenue,
+                checkedInAt: Date? = nil, userName: String? = nil, userPhotoUrl: String? = nil, venue: CoverVenue,
                 event: CoverEvent? = nil)
     {
         self.id = id
@@ -885,6 +889,48 @@ public struct Admission: Codable, Sendable, Hashable, Identifiable {
         self.userPhotoUrl = userPhotoUrl
         self.venue = venue
         self.event = event
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, status, night, amountCents, totalCents, currency, isRefundable, passSecret, scanCount, checkedInAt
+        case userName, userPhotoUrl, venue, event
+    }
+
+    /// Reads `checkedInAt` as the ISO 8601 string the API sends, whatever the decoder's date strategy.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        status = try container.decode(AdmissionStatus.self, forKey: .status)
+        night = try container.decode(String.self, forKey: .night)
+        amountCents = try container.decode(Int.self, forKey: .amountCents)
+        totalCents = try container.decode(Int.self, forKey: .totalCents)
+        currency = try container.decode(String.self, forKey: .currency)
+        isRefundable = try container.decode(Bool.self, forKey: .isRefundable)
+        passSecret = try container.decodeIfPresent(String.self, forKey: .passSecret)
+        scanCount = try container.decode(Int.self, forKey: .scanCount)
+        checkedInAt = try container.decodeISO8601IfPresent(forKey: .checkedInAt)
+        userName = try container.decodeIfPresent(String.self, forKey: .userName)
+        userPhotoUrl = try container.decodeIfPresent(String.self, forKey: .userPhotoUrl)
+        venue = try container.decode(CoverVenue.self, forKey: .venue)
+        event = try container.decodeIfPresent(CoverEvent.self, forKey: .event)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(status, forKey: .status)
+        try container.encode(night, forKey: .night)
+        try container.encode(amountCents, forKey: .amountCents)
+        try container.encode(totalCents, forKey: .totalCents)
+        try container.encode(currency, forKey: .currency)
+        try container.encode(isRefundable, forKey: .isRefundable)
+        try container.encodeIfPresent(passSecret, forKey: .passSecret)
+        try container.encode(scanCount, forKey: .scanCount)
+        try container.encodeIfPresent(checkedInAt.map(ISO8601.string(from:)), forKey: .checkedInAt)
+        try container.encodeIfPresent(userName, forKey: .userName)
+        try container.encodeIfPresent(userPhotoUrl, forKey: .userPhotoUrl)
+        try container.encode(venue, forKey: .venue)
+        try container.encodeIfPresent(event, forKey: .event)
     }
 }
 

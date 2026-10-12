@@ -72,18 +72,6 @@ enum Queries {
     }
     """
 
-    /// Records the user's position and says where that is: `venue` when they're in one, else `locale` and
-    /// its `nearbyVenues`, plus `audience` for its mixins. Select the fields the app needs (with the mixins it
-    /// reads, such as `venue { friends { list { name } } }`) and decode the result yourself; `$position` is a
-    /// ``Coordinates/graphQLValue``.
-    static func reportLocation(selecting fields: String) -> String {
-        """
-        mutation ReportLocation($position: CoordinatesInput!) {
-          reportLocation(input: { position: $position }) { \(fields) }
-        }
-        """
-    }
-
     static let rsvpEvent = """
     mutation RSVPEvent($eventId: ID!, $state: RSVPState!) {
       rsvpEvent(input: { eventId: $eventId, state: $state }) { event { id rsvp { mine } } }
@@ -113,8 +101,8 @@ enum Queries {
     """
 
     static let registerDevice = """
-    mutation RegisterDevice($notificationToken: String!) {
-      registerDevice(input: { notificationToken: $notificationToken }) { registered }
+    mutation RegisterDevice($notificationToken: String!, $appId: String, $sandbox: Boolean) {
+      registerDevice(input: { notificationToken: $notificationToken, appId: $appId, sandbox: $sandbox }) { registered }
     }
     """
 

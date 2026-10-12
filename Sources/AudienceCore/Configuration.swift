@@ -68,18 +68,30 @@ public struct AudienceKitConfiguration: Sendable, Hashable {
     /// and ``AudienceSession/branding()`` return, the audience's staging Facebook app.
     public var environment: AudienceKitEnvironment
 
+    /// The prefix on the audience's cover pass QR codes (`<prefix>.<admission id>.<window>.<signature>`), which
+    /// the door checks. ``AudienceKit/CoverPass/defaultPrefix`` unless the audience has its own.
+    public var coverPassPrefix: String
+
+    /// What to call the audience's fee on a cover charge (`feeCents`) when showing the person the price breakdown,
+    /// e.g. "Hot Mess fee".
+    public var feeLabel: String
+
     public init(
         baseURL: URL = AudienceKitSDK.productionBaseURL,
         host: String? = nil,
         audienceID: String? = nil,
         facebookAppID: String? = nil,
-        environment: AudienceKitEnvironment = .production
+        environment: AudienceKitEnvironment = .production,
+        coverPassPrefix: String = "HMC1",
+        feeLabel: String = "Service fee"
     ) {
         self.baseURL = baseURL
         self.host = host
         self.audienceID = audienceID
         self.facebookAppID = facebookAppID
         self.environment = environment
+        self.coverPassPrefix = coverPassPrefix
+        self.feeLabel = feeLabel
     }
 }
 
