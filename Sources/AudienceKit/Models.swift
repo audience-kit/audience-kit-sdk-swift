@@ -70,7 +70,7 @@ public struct AudienceLocale: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
-/// A venue, person or locale's `profile` facet, as far as the SDK reads it: the Facebook Page (`facebook { page }`)
+/// A venue, person or locale's `profile` mixin, as far as the SDK reads it: the Facebook Page (`facebook { page }`)
 /// and the Google place ID (`places { placeId }`). Either module may be left out of the query.
 struct ListingProfile: Codable, Sendable, Hashable {
     struct Facebook: Codable, Sendable, Hashable { var page: Page? }
@@ -216,9 +216,9 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
         case personName = "name"
     }
 
-    /// The API's `venues` facet.
+    /// The API's `venues` mixin.
     private enum VenuesKeys: String, CodingKey { case home }
-    /// The API's `events` facet: two connections.
+    /// The API's `events` mixin: two connections.
     private enum EventsKeys: String, CodingKey { case upcoming, involvements }
     private enum ConnectionKeys: String, CodingKey { case nodes, edges }
 
@@ -229,12 +229,12 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
         global = try container.decode(Bool.self, forKey: .global)
         likeRequired = try container.decode(Bool.self, forKey: .likeRequired)
         page = try container.decodeIfPresent(ListingProfile.self, forKey: .profile)?.facebook?.page
-        homeVenue = try container.decodeIfPresent(VenuesFacet.self, forKey: .venues)?.home
+        homeVenue = try container.decodeIfPresent(VenuesMixin.self, forKey: .venues)?.home
         locales = try container.decodeIfPresent([AudienceLocale].self, forKey: .locales)
-        let eventsFacet = try container.decodeIfPresent(EventsFacet.self, forKey: .events)
-        involvements = eventsFacet?.involvements?.edges
+        let eventsMixin = try container.decodeIfPresent(EventsMixin.self, forKey: .events)
+        involvements = eventsMixin?.involvements?.edges
         // `Queries.people` asks for the involvements alone: their nodes are the events.
-        events = eventsFacet?.upcoming?.nodes ?? involvements?.map(\.event)
+        events = eventsMixin?.upcoming?.nodes ?? involvements?.map(\.event)
         tags = try container.decodeIfPresent([Tag].self, forKey: .tags)
         personName = try container.decodeIfPresent(String.self, forKey: .personName)
     }
@@ -257,25 +257,25 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
             try venues.encode(homeVenue, forKey: .home)
         }
         if events != nil || involvements != nil {
-            var eventsFacet = container.nestedContainer(keyedBy: EventsKeys.self, forKey: .events)
+            var eventsMixin = container.nestedContainer(keyedBy: EventsKeys.self, forKey: .events)
             if let events {
-                var upcoming = eventsFacet.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .upcoming)
+                var upcoming = eventsMixin.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .upcoming)
                 try upcoming.encode(events, forKey: .nodes)
             }
             if let involvements {
-                var connection = eventsFacet.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .involvements)
+                var connection = eventsMixin.nestedContainer(keyedBy: ConnectionKeys.self, forKey: .involvements)
                 try connection.encode(involvements, forKey: .edges)
             }
         }
     }
 
     /// `venues { home }`.
-    private struct VenuesFacet: Decodable {
+    private struct VenuesMixin: Decodable {
         var home: PersonVenue?
     }
 
     /// `events { upcoming { nodes } involvements { edges } }`, either of which the query may leave out.
-    private struct EventsFacet: Decodable {
+    private struct EventsMixin: Decodable {
         var upcoming: NodeList<PersonEvent>?
         var involvements: InvolvementEdges?
     }
@@ -357,7 +357,7 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
     public var name: String?
     public var photoUrl: String?
     public var locale: AudienceLocale?
-    /// The signed-in user's friends who have been there lately: the API's `friends { list }` facet. Nil when the
+    /// The signed-in user's friends who have been there lately: the API's `friends { list }` mixin. Nil when the
     /// query didn't ask.
     public var friends: [Friend]?
 
@@ -371,7 +371,7 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey { case id, name, photoUrl, locale, friends }
-    private struct FriendsFacet: Codable { var list: FriendList? }
+    private struct FriendsMixin: Codable { var list: FriendList? }
     private struct FriendList: Codable { var nodes: [Friend?]? }
 
     public init(from decoder: Decoder) throws {
@@ -380,7 +380,7 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
         name = try container.decodeIfPresent(String.self, forKey: .name)
         photoUrl = try container.decodeIfPresent(String.self, forKey: .photoUrl)
         locale = try container.decodeIfPresent(AudienceLocale.self, forKey: .locale)
-        friends = try container.decodeIfPresent(FriendsFacet.self, forKey: .friends)?.list?.nodes?.compactMap { $0 }
+        friends = try container.decodeIfPresent(FriendsMixin.self, forKey: .friends)?.list?.nodes?.compactMap { $0 }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -389,7 +389,7 @@ public struct PersonVenue: Codable, Sendable, Hashable, Identifiable {
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(photoUrl, forKey: .photoUrl)
         try container.encodeIfPresent(locale, forKey: .locale)
-        try container.encodeIfPresent(friends.map { FriendsFacet(list: FriendList(nodes: $0)) }, forKey: .friends)
+        try container.encodeIfPresent(friends.map { FriendsMixin(list: FriendList(nodes: $0)) }, forKey: .friends)
     }
 }
 
@@ -403,30 +403,30 @@ public struct PersonEvent: Codable, Sendable, Hashable, Identifiable {
     public var locale: AudienceLocale?
     /// The audience's tags on it, by name; nil when the query didn't ask.
     public var tags: [Tag]?
-    /// The API's `venue` facet: a display name and the venue, if any.
-    private var venueFacet: VenueFacet?
+    /// The API's `venue` mixin: a display name and the venue, if any.
+    private var venueMixin: VenueMixin?
 
     /// Where it is; nil while the venue is still to be announced, or when the query didn't ask.
     public var venue: PersonVenue? {
-        get { venueFacet?.venue }
-        set { venueFacet = VenueFacet(name: venueFacet?.name, venue: newValue) }
+        get { venueMixin?.venue }
+        set { venueMixin = VenueMixin(name: venueMixin?.name, venue: newValue) }
     }
 
     /// Its venue's name as the API shows it, e.g. "To be announced" when there is none; nil when the query didn't ask.
-    public var venueName: String? { venueFacet?.name }
+    public var venueName: String? { venueMixin?.name }
 
     public var startDate: Date? {
         startAt.flatMap { try? Date($0, strategy: .iso8601) }
     }
 
-    private struct VenueFacet: Codable, Sendable, Hashable {
+    private struct VenueMixin: Codable, Sendable, Hashable {
         var name: String?
         var venue: PersonVenue?
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, startAt, locale, tags
-        case venueFacet = "venue"
+        case venueMixin = "venue"
     }
 }
 
@@ -638,27 +638,27 @@ public struct CoverPurchase: Codable, Sendable, Hashable {
 public struct VenueCover: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
-    /// The API's `tickets` facet, read for the `cover` facet inside it; nil where the audience has neither module.
+    /// The API's `tickets` mixin, read for the `cover` mixin inside it; nil where the audience has neither module.
     private var tickets: Tickets?
 
     /// Tonight's cover, or `nil` when there is none.
     public var coverCharge: CoverCharge? {
         get { tickets?.cover?.charge }
-        set { tickets = Tickets(cover: Facet(charge: newValue, viewerAdmission: viewerAdmission)) }
+        set { tickets = Tickets(cover: Mixin(charge: newValue, viewerAdmission: viewerAdmission)) }
     }
     /// The signed-in user's cover for tonight, paid or being paid.
     public var viewerAdmission: Admission? {
         get { tickets?.cover?.viewerAdmission }
-        set { tickets = Tickets(cover: Facet(charge: coverCharge, viewerAdmission: newValue)) }
+        set { tickets = Tickets(cover: Mixin(charge: coverCharge, viewerAdmission: newValue)) }
     }
 
     /// `tickets { cover }`.
     private struct Tickets: Codable, Sendable, Hashable {
-        var cover: Facet?
+        var cover: Mixin?
     }
 
     /// `cover { charge viewerAdmission }`.
-    private struct Facet: Codable, Sendable, Hashable {
+    private struct Mixin: Codable, Sendable, Hashable {
         var charge: CoverCharge?
         var viewerAdmission: Admission?
     }
@@ -681,22 +681,22 @@ public struct DoorVenue: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String?
     public var photoUrl: String?
-    /// The API's `tickets` facet, read for the `cover` facet inside it.
+    /// The API's `tickets` mixin, read for the `cover` mixin inside it.
     private var tickets: Tickets?
 
     /// The night's door, or `nil` unless the signed-in user can work it.
     public var door: DoorNight? {
         get { tickets?.cover?.door }
-        set { tickets = Tickets(cover: Facet(door: newValue)) }
+        set { tickets = Tickets(cover: Mixin(door: newValue)) }
     }
 
     /// `tickets { cover }`.
     private struct Tickets: Codable, Sendable, Hashable {
-        var cover: Facet?
+        var cover: Mixin?
     }
 
     /// `cover { door }`.
-    private struct Facet: Codable, Sendable, Hashable {
+    private struct Mixin: Codable, Sendable, Hashable {
         var door: DoorNight?
     }
 }

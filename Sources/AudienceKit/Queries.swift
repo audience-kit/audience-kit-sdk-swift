@@ -12,27 +12,25 @@ public enum Queries {
     /// friends are there now.
     public static let personVenueFields = "id name photoUrl locale { id name } friends { list { nodes { id name facebookId presence } } }"
     /// One of a person's events (`PersonEvent`), on its own or as the node of a `PersonEventInvolvement`. Its
-    /// `venue` is the events facet: a display name ("To be announced" when there is none) and the venue, if any.
+    /// `venue` is the events mixin: a display name ("To be announced" when there is none) and the venue, if any.
     public static let personEventFields = "id name startAt locale { id name } venue { name venue { \(personVenueFields) } } tags { \(tagFields) }"
 
     public static let audience = """
     query Audience {
-      audience { id name subdomain theme { preset tagline light { name value } dark { name value } } }
+      id name subdomain theme { preset tagline light { name value } dark { name value } }
     }
     """
 
     public static let venues = """
     query Venues {
-      audience {
-        venues {
-          list {
-            nodes {
-              id name hidden order photoUrl bannerUrl
-              profile { facebook { page { \(pageFields) } } }
-              locale { \(localeFields) }
-              location { id point address places { placeId } }
-              tags { \(tagFields) }
-            }
+      venues {
+        list {
+          nodes {
+            id name hidden order photoUrl bannerUrl
+            profile { facebook { page { \(pageFields) } } }
+            locale { \(localeFields) }
+            location { id point address places { placeId } }
+            tags { \(tagFields) }
           }
         }
       }
@@ -41,16 +39,14 @@ public enum Queries {
 
     public static let people = """
     query People {
-      audience {
-        people {
-          list {
-            nodes {
-              id name order global likeRequired profile { facebook { page { \(pageFields) } } }
-              venues { home { \(personVenueFields) } }
-              locales { id name }
-              events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
-              tags { \(tagFields) }
-            }
+      people {
+        list {
+          nodes {
+            id name order global likeRequired profile { facebook { page { \(pageFields) } } }
+            venues { home { \(personVenueFields) } }
+            locales { id name }
+            events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }
+            tags { \(tagFields) }
           }
         }
       }
@@ -59,7 +55,7 @@ public enum Queries {
 
     public static let locales = """
     query Locales {
-      audience { locales { \(localeFields) } }
+      locales { \(localeFields) }
     }
     """
 
@@ -76,7 +72,7 @@ public enum Queries {
     """
 
     /// Records the user's position and says where that is: `venue` when they're in one, else `locale` and
-    /// its `nearbyVenues`, plus `audience` for its facets. Select the fields the app needs (with the facets it
+    /// its `nearbyVenues`, plus `audience` for its mixins. Select the fields the app needs (with the mixins it
     /// reads, such as `venue { friends { list { name } } }`) and decode the result yourself; `$position` is a
     /// ``Coordinates/graphQLValue``.
     public static func reportLocation(selecting fields: String) -> String {
@@ -96,7 +92,7 @@ public enum Queries {
     /// The tribes people can identify with here, and the signed-in user's own.
     public static let tribes = """
     query Tribes {
-      audience { id tribes { \(tagFields) tribe } }
+      id tribes { \(tagFields) tribe }
       me { id tribes { isPrivate tag { \(tagFields) tribe } } }
     }
     """
@@ -208,35 +204,27 @@ public enum Queries {
     """
 }
 
-struct AudienceResponse: Decodable, Sendable { var audience: Audience? }
-/// A connection read as `nodes { … }`: the facet lists (`venues { list }`, `cover { admissions }`) are connections.
+/// A connection read as `nodes { … }`: the mixin lists (`venues { list }`, `cover { admissions }`) are connections.
 struct Nodes<Element: Decodable & Sendable>: Decodable, Sendable { var nodes: [Element] }
 
-/// `audience { venues { list { nodes } } }`.
+/// `venues { list { nodes } }` on the root, the audience.
 struct VenuesResponse: Decodable, Sendable {
-    struct Audience: Decodable, Sendable { var venues: Facet }
-    struct Facet: Decodable, Sendable { var list: Nodes<Venue> }
+    struct Mixin: Decodable, Sendable { var list: Nodes<Venue> }
 
-    var audience: Audience?
-    var venues: [Venue] { audience?.venues.list.nodes ?? [] }
+    private var venues: Mixin?
+    var list: [Venue] { venues?.list.nodes ?? [] }
 }
 
-/// `audience { people { list { nodes } } }`.
+/// `people { list { nodes } }` on the root, the audience.
 struct PeopleResponse: Decodable, Sendable {
-    struct Audience: Decodable, Sendable { var people: Facet }
-    struct Facet: Decodable, Sendable { var list: Nodes<Person> }
+    struct Mixin: Decodable, Sendable { var list: Nodes<Person> }
 
-    var audience: Audience?
-    var people: [Person] { audience?.people.list.nodes ?? [] }
+    private var people: Mixin?
+    var list: [Person] { people?.list.nodes ?? [] }
 }
 
-/// `audience { locales }`.
-struct LocalesResponse: Decodable, Sendable {
-    struct Audience: Decodable, Sendable { var locales: [AudienceLocale] }
-
-    var audience: Audience?
-    var locales: [AudienceLocale] { audience?.locales ?? [] }
-}
+/// `locales` on the root, the audience.
+struct LocalesResponse: Decodable, Sendable { var locales: [AudienceLocale]? }
 struct MeResponse: Decodable, Sendable { var me: User? }
 struct NodeResponse: Decodable, Sendable { var node: Node? }
 struct ClosestLocaleResponse: Decodable, Sendable { var closestLocale: AudienceLocale? }
@@ -245,9 +233,8 @@ struct RegisterDeviceResponse: Decodable, Sendable {
     var registerDevice: Payload
 }
 struct TribesResponse: Decodable, Sendable {
-    struct Available: Decodable, Sendable { var tribes: [Tag] }
     struct Mine: Decodable, Sendable { var tribes: [TribeIdentification] }
-    var audience: Available?
+    var tribes: [Tag]?
     var me: Mine?
 }
 struct TribesPayload: Decodable, Sendable { var tribes: [TribeIdentification] }

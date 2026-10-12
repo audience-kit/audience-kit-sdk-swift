@@ -170,7 +170,7 @@ try await client.registerDevice(notificationToken: hexToken)
 
 `reportLocation` records where the member is and says where that is: the
 `venue` they're in, else their `locale` and its `nearbyVenues`. Select the
-fields you need, including the module facets the screen reads (such as
+fields you need, including the module mixins the screen reads (such as
 `venue { friends { list { name } } }` or `audience { ping { friendPings { id } } }`),
 and decode into your own type; pass a `decoder` when your models need their
 own date strategy:
@@ -185,7 +185,7 @@ The API also serves `venues { venue(id:) }`, `events { event(id:) }`,
 `people { person(id:) }` and `locale(id:)` by UUID,
 `audience { venues { list(near:) } }` nearest first with each `distance`, and each
 locale's and venue's upcoming events
-(`events { upcoming { nodes { … } } }`: facets, whose lists are Relay connections).
+(`events { upcoming { nodes { … } } }`: mixins, whose lists are Relay connections).
 
 ## Cover
 
