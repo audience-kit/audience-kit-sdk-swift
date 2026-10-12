@@ -95,6 +95,19 @@ Task {
 }
 ```
 
+The event comes once per session, however many calls the API refused at the
+same time, and a refusal of an older token never ends a newer sign-in. A 403
+(`.forbidden`, e.g. no staff role) or a network failure doesn't end the session.
+
+Connections the SDK doesn't make itself (the Action Cable websocket, a
+Server-Sent Events stream) carry `client.sessionToken()`. When the server
+refuses that token there (the cable closes with `"reason": "unauthorized"`, the
+stream answers 401), hand the token back and the session ends the same way:
+
+```swift
+await client.sessionRejected(token: token)
+```
+
 `client.signOut()` forgets the session on the device. Log out of Facebook in
 your app as well.
 

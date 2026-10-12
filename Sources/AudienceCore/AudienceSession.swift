@@ -10,8 +10,9 @@ public enum SessionEvent: Sendable, Equatable {
     case signedIn
     /// ``AudienceSession/signOut()`` was called.
     case signedOut
-    /// The API rejected the stored session (HTTP 401), e.g. after the person removed the app from
-    /// Facebook. The token has been forgotten; show sign-in again.
+    /// The API rejected the stored session (HTTP 401, or ``AudienceSession/sessionRejected(token:)`` for a socket or
+    /// stream), e.g. after the person removed the app from Facebook or the token was issued for another endpoint. The
+    /// token has been forgotten; show sign-in again. Yielded once per session, however many calls were refused.
     case sessionEnded
 }
 
@@ -94,7 +95,7 @@ public actor AudienceSession {
     }
 
     /// The stored session token, for the rare connection the SDK doesn't make itself (e.g. the
-    /// Action Cable websocket). Never log it.
+    /// Action Cable websocket). Never log it. When the API refuses it there, hand it to ``sessionRejected(token:)``.
     public func sessionToken() throws -> String? {
         try tokenStore.loadToken()
     }
@@ -260,17 +261,19 @@ public actor AudienceSession {
 
     /// Sends a request to a REST endpoint and returns the body of a successful response.
     public func data(for request: APIRequest) async throws -> Data {
-        if request.authenticated, (try? tokenStore.loadToken()) == nil {
-            throw AudienceKitError.notSignedIn
+        var token: String?
+        if request.authenticated {
+            guard let stored = try? tokenStore.loadToken() else { throw AudienceKitError.notSignedIn }
+            token = stored
         }
 
-        let (data, response) = try await perform(request)
+        let (data, response) = try await perform(request, token: token)
 
         switch response.statusCode {
         case 200 ..< 300:
             return data
-        case 401 where request.authenticated:
-            endSession()
+        case 401 where token != nil:
+            sessionRejected(token: token)
             throw AudienceKitError.unauthorized
         default:
             throw Self.error(forStatus: response.statusCode, data: data)
@@ -283,16 +286,26 @@ public actor AudienceSession {
         return URL(string: string, relativeTo: configuration.baseURL)?.absoluteURL
     }
 
-    // MARK: - Private
-
-    private func endSession() {
+    /// Ends the session because the API refused `token`, for connections the SDK doesn't make itself: an Action Cable
+    /// socket the server closed with `"reason": "unauthorized"`, or a Server-Sent Events stream answered with HTTP 401.
+    /// (A 403 or a rejected channel subscription refuses that one thing, not the session; don't call this for them.)
+    ///
+    /// Forgets the token and yields ``SessionEvent/sessionEnded``, once: when the store no longer holds `token` (the
+    /// session already ended, or the person has signed in again since) it does nothing and returns false.
+    @discardableResult
+    public func sessionRejected(token: String?) -> Bool {
+        guard let token, let stored = try? tokenStore.loadToken(), stored == token else { return false }
         try? tokenStore.deleteToken()
         resolvedAudienceID = nil
         sessionContinuation.yield(.sessionEnded)
+        return true
     }
 
-    private func perform(_ request: APIRequest) async throws -> (Data, HTTPURLResponse) {
-        let urlRequest = try makeURLRequest(request)
+    // MARK: - Private
+
+    /// Sends `request`, with `token` when it's authenticated (by default the stored one).
+    private func perform(_ request: APIRequest, token: String? = nil) async throws -> (Data, HTTPURLResponse) {
+        let urlRequest = try makeURLRequest(request, token: token)
 
         let data: Data
         let response: URLResponse
@@ -308,7 +321,7 @@ public actor AudienceSession {
         return (data, http)
     }
 
-    private func makeURLRequest(_ request: APIRequest) throws -> URLRequest {
+    private func makeURLRequest(_ request: APIRequest, token: String?) throws -> URLRequest {
         guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
             throw AudienceKitError.missingConfiguration("the base URL is invalid")
         }
@@ -335,7 +348,7 @@ public actor AudienceSession {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        if request.authenticated, let token = try? tokenStore.loadToken() {
+        if request.authenticated, let token = token ?? (try? tokenStore.loadToken()) {
             urlRequest.setValue("JWT \(token)", forHTTPHeaderField: "Authorization")
         }
 

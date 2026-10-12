@@ -385,6 +385,51 @@ private func makeClient(
         #expect(await events.next() == .sessionEnded)
     }
 
+    @Test func manyRejectedCallsEndTheSessionOnce() async throws {
+        let stub = Stub { _ in .json(status: 401, body: "{}") }
+        let (client, _) = makeClient(stub)
+
+        await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
+        // Signed out now, so later calls don't reach the API at all.
+        await #expect(throws: AudienceKitError.notSignedIn) { try await client.people() }
+        #expect(await client.sessionRejected(token: "session-token") == false)
+        await client.signOut()
+
+        var events = client.sessionEvents.makeAsyncIterator()
+        #expect(await events.next() == .sessionEnded)
+        #expect(await events.next() == .signedOut)
+        #expect(stub.requests.count == 1)
+    }
+
+    @Test func aRefusalOfAnOlderTokenKeepsANewerSession() async throws {
+        let store = InMemoryTokenStore(token: "session-token")
+        let stub = Stub { _ in
+            // The person signed in again while the old token's call was in flight.
+            _ = try? store.saveToken("newer-token")
+            return .json(status: 401, body: "{}")
+        }
+        let configuration = AudienceKitConfiguration(baseURL: stub.baseURL, audienceID: audienceID)
+        let client = AudienceKitClient(configuration: configuration, tokenStore: store, session: stub.session)
+
+        await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
+
+        #expect(try store.loadToken() == "newer-token")
+        #expect(stub.requests.first?.header("Authorization") == "JWT session-token")
+    }
+
+    @Test func aSocketTheServerRefusedEndsTheSession() async throws {
+        let stub = Stub { _ in .json(status: 200, body: "{}") }
+        let (client, store) = makeClient(stub)
+        var events = client.sessionEvents.makeAsyncIterator()
+
+        #expect(await client.sessionRejected(token: "someone-elses-token") == false)
+        #expect(try store.loadToken() == "session-token")
+
+        #expect(await client.sessionRejected(token: "session-token"))
+        #expect(try store.loadToken() == nil)
+        #expect(await events.next() == .sessionEnded)
+    }
+
     @Test func forbiddenIsNotASessionEnding() async throws {
         let stub = Stub { _ in .json(status: 403, body: "{}") }
         let (client, store) = makeClient(stub)
