@@ -99,14 +99,43 @@ The event comes once per session, however many calls the API refused at the
 same time, and a refusal of an older token never ends a newer sign-in. A 403
 (`.forbidden`, e.g. no staff role) or a network failure doesn't end the session.
 
-Connections the SDK doesn't make itself (the Action Cable websocket, a
-Server-Sent Events stream) carry `client.sessionToken()`. When the server
-refuses that token there (the cable closes with `"reason": "unauthorized"`, the
-stream answers 401), hand the token back and the session ends the same way:
+Connections the SDK doesn't make itself (a Server-Sent Events stream) carry
+`client.sessionToken()`. When the server refuses that token there (the stream
+answers 401), hand the token back and the session ends the same way:
 
 ```swift
 await client.sessionRejected(token: token)
 ```
+
+## Realtime: one cable for every subscription
+
+GraphQL subscriptions (chat rooms, notifications) ride one Action Cable
+websocket. Keep one `AudienceCable` for the app and subscribe every feature on
+it; the socket opens with the first subscription and closes after the last one
+ends, so subscriptions that live while the app is in the foreground keep it open
+exactly then.
+
+```swift
+let cable = AudienceCable(
+    url: AudienceCable.url(for: configuration.baseURL),
+    token: { try? store.loadToken() },
+    unauthorized: { token in Task { await client.sessionRejected(token: token) } }
+)
+
+for await event in await cable.subscribe(query: document, variables: ["id": "…"], audienceID: audienceID) {
+    switch event {
+    case .subscribed: break                 // the operation went out (again, after a reconnect)
+    case .result(let json): handle(json)    // { "data": …, "errors": … }
+    case .rejected: break                   // the channel was turned away; the stream ends
+    case .disconnected(_, let reconnects): break // dropped or quiet; resubscribes itself unless `reconnects` is false
+    }
+}
+```
+
+A socket that hears nothing for 12 seconds (Action Cable pings every 3) counts
+as dropped. The cable reconnects with backoff from one second to half a minute,
+then subscribes and executes every live operation again. Call `disconnect()` on
+signing out.
 
 `client.signOut()` forgets the session on the device. Log out of Facebook in
 your app as well.
