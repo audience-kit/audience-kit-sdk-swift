@@ -5,7 +5,7 @@ public enum ISO8601 {
     /// Parses `2026-10-06T20:00:00Z`, `2026-10-09T21:00:00.123-07:00` and the like; `nil` when `string` isn't one.
     public static func date(from string: String) -> Date? {
         // The style is strict about fractional seconds either way, so pick it by whether the time has them.
-        let time = string.drop { $0 != "T" }
+        let time = string.drop(while: { $0 != "T" })
         let fractional = time.contains(".")
         return try? Date(string, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: fractional))
     }

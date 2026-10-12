@@ -21,7 +21,7 @@ Dependencies…** with the same URL):
 
 | Product | What it is | Depends on |
 | --- | --- | --- |
-| `AudienceCore` | The session: configuration, sign-in, token stores, GraphQL transport, branding, errors | nothing |
+| `AudienceCore` | The session: configuration, sign-in, the credential and its stores, GraphQL transport, branding, errors | nothing |
 | `AudienceKit` | The member-facing API: venues, people, locales, events, RSVPs, location, cover | AudienceCore |
 | `AudienceKitUI` | SwiftUI building blocks and the generated `DesignTokens` | AudienceCore, AudienceKit |
 
@@ -43,7 +43,7 @@ let client = AudienceKitClient(
         host: "hotmess.admin.audiencekit.com",              // or the audience's verified domain
         facebookAppID: "<your Facebook app ID>"             // the Facebook app this build signs in with
     ),
-    tokenStore: KeychainTokenStore(service: "social.hotmess.session")
+    credentialStore: KeychainCredentialStore(service: "social.hotmess.session")
 )
 ```
 
@@ -51,12 +51,16 @@ let client = AudienceKitClient(
 | --- | --- |
 | `baseURL` | The API. `http://localhost:3000` for a local server. |
 | `host` | Names the audience. Sent with sign-in so the API checks the Facebook token against the audience's Facebook apps and binds the session to the audience, and used to fetch branding. `<subdomain>.admin.audiencekit.com` works for every audience; the audience's own domain works once it's verified. Without a host, the API only accepts tokens from the AudienceKit platform Facebook app. |
-| `audienceID` | The audience's UUID. Optional: the client reads it from the session token, or looks it up from `host`. |
+| `audienceID` | The audience's UUID. Optional: the client reads it from the stored credential, or looks it up from `host`. |
 | `facebookAppID` | The Facebook app the build uses (production, staging or development). It must be one of the audience's apps. |
+| `coverPassPrefix` | The prefix on cover pass QR codes, `HMC1` by default. |
+| `feeLabel` | What to call the audience's fee on a cover charge, e.g. "Hot Mess fee". |
 
-`KeychainTokenStore` keeps the session token in the keychain (readable after
-first unlock, so background launches can use it). `InMemoryTokenStore` is for
-tests and previews, and you can write your own `TokenStore`.
+`KeychainCredentialStore` keeps the session's `Credential` in the keychain
+(readable after first unlock, so background launches can use it), as a
+versioned JSON item; an item from an older SDK reads as no session.
+`InMemoryCredentialStore` is for tests and previews, and you can write your own
+`CredentialStore`.
 
 ## Sign in
 
@@ -70,22 +74,35 @@ let device = DeviceDescription(
     build: "42"
 )
 let result = try await client.signIn(facebookAccessToken: token.tokenString, device: device)
-print("Signed in as \(result.user.name ?? result.user.id)")
+print("Signed in as \(result.credential.userId) in audience \(result.credential.audienceId ?? "-")")
 ```
 
-This calls `POST /v1/token`. The SDK stores the session token and sends it on
-every later call as `Authorization: JWT <token>`.
+This calls `POST /v1/token`, which answers with the session's `Credential`:
+`token`, `userId`, `audienceId`, `role`, the GraphQL `endpoint` the token was
+issued for, `venueDeviceId` and `expiresAt`. The SDK stores it and sends the
+token on every later call as `Authorization: Bearer <token>`, together with
+`X-AudienceKit-API-Version: 2026-10-11`, the API contract it speaks
+(`AudienceKitSDK.apiVersion`). The response has no profile; read `me()` for
+the person's name.
 
-Sign-in can fail with `AudienceKitError.signInRejected` (the Facebook token is
-invalid, or from an app the audience doesn't use) or `.signInFailed(message:)`.
+Sign-in can fail with code `SIGN_IN_REJECTED` (the Facebook token is invalid,
+or from an app the audience doesn't use) or `SIGN_IN_FAILED` (the message is
+the API's).
+
+A credential minted elsewhere (a venue device's, one the platform console
+handed over) becomes the session with `try await client.adopt(credential:)`,
+and a platform-console session moves to an audience with
+`try await client.switchAudience(to: audienceID)` (`POST /v1/admin/choices`).
+GraphQL then goes to the API instance and audience the credential names.
 
 ## Session ends
 
 Sessions don't expire, but they end when the person signs out elsewhere or
-removes the app from Facebook. Then any call throws
-`AudienceKitError.unauthorized`, the client deletes the token, and
-`sessionEvents` yields `.sessionEnded`. Watch it from one place to send the
-person back to sign-in:
+removes the app from Facebook. Then any call throws an `AudienceKitError` with
+code `UNAUTHENTICATED` (`error.isUnauthenticated`), the client deletes the
+credential, and `sessionEvents` yields `.sessionEnded`. Every access to
+`sessionEvents` is its own subscription, so watch it from as many places as
+you like:
 
 ```swift
 Task {
@@ -97,7 +114,7 @@ Task {
 
 The event comes once per session, however many calls the API refused at the
 same time, and a refusal of an older token never ends a newer sign-in. A 403
-(`.forbidden`, e.g. no staff role) or a network failure doesn't end the session.
+(`FORBIDDEN`, e.g. no staff role) or a network failure doesn't end the session.
 
 Connections the SDK doesn't make itself (the Action Cable websocket, a
 Server-Sent Events stream) carry `client.sessionToken()`. When the server
@@ -108,8 +125,11 @@ stream answers 401), hand the token back and the session ends the same way:
 await client.sessionRejected(token: token)
 ```
 
-`client.signOut()` forgets the session on the device. Log out of Facebook in
-your app as well.
+`try await client.signOut()` forgets the session on the device, yields
+`.signedOut`, then revokes the token with `DELETE /v1/token`. The device is
+signed out even when that call fails (offline, say); the thrown error means the
+token may still be alive on the server. Log out of Facebook in your app as
+well.
 
 ## Read the audience
 
@@ -147,9 +167,13 @@ let names = try await client.graphQL(
 ```
 
 Variables are `[String: GraphQLValue]`, which you can write as literals:
-`variables: ["id": "…"]`. If the response has `errors`, the call throws
-`AudienceKitError.graphQL([GraphQLError])` with each message, path and
-extensions.
+`variables: ["id": "…"]`. Dates decode from ISO 8601 strings (fractional
+seconds or not) with the default decoder, `JSONDecoder.audienceKit`; pass your
+own `decoder` for other strategies. If the response has `errors`, the call
+throws an `AudienceKitError` whose `code` and `message` are the first error's
+(`extensions.code`: `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `INVALID`,
+`RATE_LIMITED`, `CONFLICT`, `INTERNAL`), with `INVALID`'s per-field messages in
+`fields` and every error in `errors`.
 
 ## Branding
 
@@ -175,23 +199,27 @@ audience's `branding.theme` overrides on its preset's colours.
 The calls the Hot Mess apps make for the signed-in member:
 
 ```swift
-let here = Coordinates(latitude: 37.77, longitude: -122.42)
-let locale = try await client.closestLocale(near: here) // AudienceLocale?
-try await client.setRSVP(.attending, forEvent: eventID) // mirrored to Facebook
-try await client.registerDevice(notificationToken: hexToken)
+let here = Coordinate(latitude: 37.77, longitude: -122.42)
+let locale = try await client.closestLocale(near: here, beaconMajor: beacon?.major) // AudienceLocale?
+try await client.setRSVP(.attending, forEvent: eventID) // reads back rsvp { mine }
+try await client.registerDevice(token: hexToken, appId: Bundle.main.bundleIdentifier, sandbox: isDebugBuild)
 ```
 
 `reportLocation` records where the member is and says where that is: the
 `venue` they're in, else their `locale` and its `nearbyVenues`. Select the
 fields you need, including the module mixins the screen reads (such as
 `venue { friends { list { name } } }` or `audience { me { ping { friendPings { id } } } }`),
-and decode into your own type; pass a `decoder` when your models need their
-own date strategy:
+and decode into your own type. `$position` is a `CoordinatesInput`:
+`here.coordinatesInput(beaconMajor: beacon?.major)`, or `here.graphQLValue`
+with no beacon.
 
 ```swift
-let document = Queries.reportLocation(selecting: "venue { id name } locale { id name } nearbyVenues { id name distance }")
-let now = try await client.graphQL(document, variables: ["position": here.graphQLValue],
-                                   as: MyNowResponse.self, decoder: myDecoder)
+let document = """
+mutation ReportLocation($position: CoordinatesInput!) {
+  reportLocation(input: { position: $position }) { venue { id name } locale { id name } nearbyVenues { id name distance } }
+}
+"""
+let now = try await client.graphQL(document, variables: ["position": here.graphQLValue], as: MyNowResponse.self)
 ```
 
 The API also serves `venues { venue(id:) }`, `events { event(id:) }`,
@@ -224,10 +252,12 @@ _ = try await client.refundAdmission(admissionID: pass.id) // while pass.isRefun
 ```
 
 Make the pass's QR code on the device, so it works with no signal. It changes
-every 30 seconds (Apple platforms, CryptoKit):
+every 30 seconds (Apple platforms, CryptoKit) and starts with the audience's
+`coverPassPrefix`:
 
 ```swift
-let code = CoverPass.code(admissionID: pass.id, secret: pass.passSecret ?? "")
+let code = client.coverPassCode(for: pass)
+// or CoverPass.code(admissionID: pass.id, secret: secret, prefix: "HMC1")
 ```
 
 Door staff see venues in `doorVenues()` and check codes with
@@ -245,18 +275,34 @@ let data = try await client.data(for: APIRequest(method: "POST", path: "/", auth
 
 ## Errors
 
-| `AudienceKitError` | When |
+Every failure is an `AudienceKitError`: a `code`, a `message` for the person,
+and detail where there is any (`status`, `fields`, `errors`, `underlying`,
+`minimumSDKVersion`). Switch on `error.code` against `AudienceKitError.Code`:
+
+| Code | When |
 | --- | --- |
-| `.notSignedIn` | No stored session for a call that needs one. |
-| `.unauthorized` | The API rejected the session (401). The session has ended. |
-| `.signInRejected`, `.signInFailed(message:)` | `POST /v1/token` refused the Facebook token (401), or failed (400). |
-| `.forbidden` | 403, e.g. a session bound to another audience. |
-| `.notFound` | 404: no such audience, record or host. |
-| `.http(status:)` | Any other unsuccessful status. |
-| `.network(URLError)` | No response: offline, timeout, TLS. |
-| `.decoding(String)` | The response wasn't what the SDK expected. |
-| `.graphQL([GraphQLError])` | The GraphQL response had errors. |
-| `.missingConfiguration(String)`, `.tokenStorage(String)` | Setup problems. |
+| `UNAUTHENTICATED` | The API rejected the session (401). The session has ended. |
+| `FORBIDDEN` | 403, e.g. a session bound to another audience, or no staff role. |
+| `NOT_FOUND` | 404, or a GraphQL error saying so. |
+| `INVALID` | Refused input; `fields` has the per-field messages. |
+| `RATE_LIMITED`, `CONFLICT`, `INTERNAL` | As the API says. |
+| `NOT_SIGNED_IN` | No stored credential for a call that needs one. |
+| `SIGN_IN_REJECTED`, `SIGN_IN_FAILED` | `POST /v1/token` refused the login (401), or failed (400). |
+| `UPDATE_REQUIRED`, `UNSUPPORTED_API_VERSION` | The API no longer serves this SDK (426) or its API version (400). |
+| `HTTP` | Any other unsuccessful status (`status`). |
+| `NETWORK` | No response: offline, timeout, TLS (`underlying`). |
+| `DECODING` | The response wasn't what the SDK expected. |
+| `GRAPHQL` | A GraphQL error with no `extensions.code`. |
+| `MISSING_CONFIGURATION`, `STORAGE` | Setup problems. |
+
+A code the SDK doesn't know is passed through as the API sent it. The
+constants `AudienceKitError.unauthorized`, `.forbidden`, `.notFound`,
+`.notSignedIn` and `.signInRejected` are the values the SDK throws, for tests.
+
+Server-defined enums (`RSVPState`, `Presence`, `PaymentProvider`,
+`PersonEventInvolvement.Relationship`, `AudienceKitEnvironment`) keep a value
+the SDK doesn't know as `.unknown(String)` and send it back unchanged;
+`known` lists the cases the SDK does know.
 
 ## Development
 
