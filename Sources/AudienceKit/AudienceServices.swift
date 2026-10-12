@@ -5,24 +5,22 @@ import AudienceCore
 extension AudienceSession {
     /// The audience, with its theme.
     public func audience() async throws -> Audience {
-        let response = try await graphQL(Queries.audience, operationName: "Audience", as: AudienceResponse.self)
-        guard let audience = response.audience else { throw AudienceKitError.notFound }
-        return audience
+        try await graphQL(Queries.audience, operationName: "Audience", as: Audience.self)
     }
 
     /// The audience's venues.
     public func venues() async throws -> [Venue] {
-        try await graphQL(Queries.venues, operationName: "Venues", as: VenuesResponse.self).venues
+        try await graphQL(Queries.venues, operationName: "Venues", as: VenuesResponse.self).list
     }
 
     /// The people the audience follows.
     public func people() async throws -> [Person] {
-        try await graphQL(Queries.people, operationName: "People", as: PeopleResponse.self).people
+        try await graphQL(Queries.people, operationName: "People", as: PeopleResponse.self).list
     }
 
     /// The audience's locales.
     public func locales() async throws -> [AudienceLocale] {
-        try await graphQL(Queries.locales, operationName: "Locales", as: LocalesResponse.self).locales
+        try await graphQL(Queries.locales, operationName: "Locales", as: LocalesResponse.self).locales ?? []
     }
 
     /// The signed-in user, or `nil` when the API has no current user.
@@ -52,7 +50,7 @@ extension AudienceSession {
     /// The tribes people can identify with here, and the signed-in user's own (empty when signed out).
     public func tribes() async throws -> Tribes {
         let data = try await graphQL(Queries.tribes, operationName: "Tribes", as: TribesResponse.self)
-        return Tribes(available: data.audience?.tribes ?? [], mine: data.me?.tribes ?? [])
+        return Tribes(available: data.tribes ?? [], mine: data.me?.tribes ?? [])
     }
 
     /// Identifies the signed-in user with a tribe, privately unless `isPrivate` is false, or changes that. Returns

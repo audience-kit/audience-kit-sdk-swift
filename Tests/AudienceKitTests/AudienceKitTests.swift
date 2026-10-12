@@ -171,7 +171,7 @@ private func makeClient(
 
 @Suite struct GraphQL {
     static let venuesResponse = #"""
-    {"data":{"audience":{"venues":{"list":{"nodes":[{
+    {"data":{"venues":{"list":{"nodes":[{
       "id":"Z2lkOi8vaG90LW1lc3MvVmVudWUvMTIz","name":null,"hidden":false,"order":3,
       "photoUrl":"/v1/photos/abc","bannerUrl":null,
       "profile":{"facebook":{"page":{"id":"p-1","name":"The Stud","photoUrl":"https://cdn.example/stud.jpg","bannerUrl":null}}},
@@ -184,7 +184,7 @@ private func makeClient(
       "locale":{"id":"l-2","name":"Seattle","label":"SEA","cityNames":["Seattle","Capitol Hill"],"bannerUrl":null,
         "profile":{"places":{"placeId":null}}},
       "location":null,"tags":[{"id":"t-1","name":"Leather","color":"#222222"}]
-    }]}}}}}
+    }]}}}}
     """#
 
     @Test func sendsTheSessionTokenToTheAudienceEndpoint() async throws {
@@ -258,7 +258,7 @@ private func makeClient(
             switch query {
             case "People":
                 return .json(status: 200, body: #"""
-                {"data":{"audience":{"people":{"list":{"nodes":[{"id":"pe-1","order":1,"global":false,"likeRequired":true,
+                {"data":{"people":{"list":{"nodes":[{"id":"pe-1","order":1,"global":false,"likeRequired":true,
                   "profile":{"facebook":{"page":{"id":"p-2","name":"DJ Example","photoUrl":null,"bannerUrl":null}}},
                   "locales":[{"id":"l-2","name":"Portland"}]},
                   {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,
@@ -273,7 +273,7 @@ private func makeClient(
                     null,
                     {"relationship":"DIRECT","role":"host","via":null,
                      "node":{"id":"e-2","name":"Bingo","startAt":"2026-10-10T19:00:00-07:00",
-                       "venue":{"name":"To be announced","venue":null}}}]}}}]}}}}}
+                       "venue":{"name":"To be announced","venue":null}}}]}}}]}}}}
                 """#)
             case "Me":
                 return .json(status: 200, body: #"""
@@ -282,8 +282,8 @@ private func makeClient(
                 """#)
             default:
                 return .json(status: 200, body: #"""
-                {"data":{"audience":{"id":"a-1","name":"Hot Mess","subdomain":"hotmess",
-                  "theme":{"preset":"hot_mess","tagline":"Queer nights out","light":[{"name":"accent","value":"#9c1c62"}],"dark":[]}}}}
+                {"data":{"id":"a-1","name":"Hot Mess","subdomain":"hotmess",
+                  "theme":{"preset":"hot_mess","tagline":"Queer nights out","light":[{"name":"accent","value":"#9c1c62"}],"dark":[]}}}
                 """#)
             }
         }
@@ -444,7 +444,7 @@ private func makeClient(
     }
 
     @Test func reportsMalformedResponses() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"audience":"nope"}}"#) }
+        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"venues":"nope"}}"#) }
         let (client, _) = makeClient(stub)
 
         do {
@@ -512,7 +512,7 @@ private func makeClient(
 
 @Suite struct AudienceResolution {
     @Test func usesTheSessionsAudienceClaim() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"audience":{"venues":{"list":{"nodes":[]}}}}}"#) }
+        let stub = Stub { _ in .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#) }
         let token = makeJWT(["id": "u-1", "audience_id": "from-token"])
         let (client, _) = makeClient(stub, audienceID: nil, token: token)
 
@@ -529,7 +529,7 @@ private func makeClient(
                  "facebook_app_id":"100000000000002","theme":{"preset":"hot_mess","tagline":null,"light":{},"dark":{}}}
                 """#)
             }
-            return .json(status: 200, body: #"{"data":{"audience":{"venues":{"list":{"nodes":[]}}}}}"#)
+            return .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#)
         }
         let (client, _) = makeClient(stub, audienceID: nil, token: makeJWT(["id": "u-1"]))
 
