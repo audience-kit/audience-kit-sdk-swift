@@ -16,16 +16,17 @@ public enum SessionEvent: Sendable, Equatable {
     case sessionEnded
 }
 
-/// What a successful sign-in returns.
-public struct SignInResult: Codable, Sendable, Hashable {
-    public struct SignedInUser: Codable, Sendable, Hashable {
-        public var id: String
-        public var name: String?
+/// What a successful sign-in returns: the session's ``Credential``, already saved to the client's
+/// ``CredentialStore``. The sign-in response has no profile; read `me { self }` for the person's name and photo.
+public struct SignInResult: Sendable, Hashable {
+    public let credential: Credential
+
+    public init(credential: Credential) {
+        self.credential = credential
     }
 
-    /// The session JWT, already saved to the client's ``TokenStore``.
-    public var token: String
-    public var user: SignedInUser
+    /// The signed-in user's ID.
+    public var userId: String { credential.userId }
 }
 
 /// An HTTP request to one of the API's REST endpoints, for calls the GraphQL schema doesn't cover yet
@@ -59,7 +60,7 @@ public struct APIRequest: Sendable, Hashable {
 ///
 /// The app owns Facebook Login; hand the resulting access token to
 /// ``signIn(facebookAccessToken:device:)``. After that, every call carries the session token as
-/// `Authorization: JWT <token>`. When the API rejects it, the call throws
+/// `Authorization: Bearer <token>`. When the API rejects it, the call throws
 /// ``AudienceKitError/unauthorized`` and ``sessionEvents`` yields ``SessionEvent/sessionEnded``.
 public actor AudienceSession {
     public nonisolated let configuration: AudienceKitConfiguration
@@ -68,17 +69,17 @@ public actor AudienceSession {
     public nonisolated let sessionEvents: AsyncStream<SessionEvent>
 
     private nonisolated let sessionContinuation: AsyncStream<SessionEvent>.Continuation
-    private let tokenStore: any TokenStore
+    private let credentialStore: any CredentialStore
     private let session: URLSession
     private var resolvedAudienceID: String?
 
     public init(
         configuration: AudienceKitConfiguration,
-        tokenStore: any TokenStore = InMemoryTokenStore(),
+        credentialStore: any CredentialStore = InMemoryCredentialStore(),
         session: URLSession = .shared
     ) {
         self.configuration = configuration
-        self.tokenStore = tokenStore
+        self.credentialStore = credentialStore
         self.session = session
         (sessionEvents, sessionContinuation) = AsyncStream<SessionEvent>.makeStream()
     }
@@ -89,15 +90,21 @@ public actor AudienceSession {
 
     // MARK: - Session
 
-    /// Whether a session token is stored. It may still be rejected by the API.
+    /// Whether a credential is stored. It may still be rejected by the API.
     public var isSignedIn: Bool {
-        (try? tokenStore.loadToken()) != nil
+        (try? credentialStore.load()) != nil
     }
 
-    /// The stored session token, for the rare connection the SDK doesn't make itself (e.g. the
-    /// Action Cable websocket). Never log it. When the API refuses it there, hand it to ``sessionRejected(token:)``.
+    /// The stored credential: who is signed in, to which audience, and the token for the rare connection the SDK
+    /// doesn't make itself (e.g. the Action Cable websocket). Never log the token. When the API refuses it there,
+    /// hand it to ``sessionRejected(token:)``.
+    public func credential() throws -> Credential? {
+        try credentialStore.load()
+    }
+
+    /// The stored session token: ``credential()``'s.
     public func sessionToken() throws -> String? {
-        try tokenStore.loadToken()
+        try credentialStore.load()?.token
     }
 
     /// Exchanges a Facebook user access token for an AudienceKit session and stores it.
@@ -171,20 +178,25 @@ public actor AudienceSession {
             throw Self.error(forStatus: response.statusCode, data: data)
         }
 
-        let result = try Self.decode(SignInResult.self, from: data)
+        let credential = try Self.decode(Credential.self, from: data)
+        try store(credential)
+        return SignInResult(credential: credential)
+    }
+
+    /// Saves a credential as the session and announces it.
+    private func store(_ credential: Credential) throws {
         do {
-            try tokenStore.saveToken(result.token)
+            try credentialStore.save(credential)
         } catch {
             throw AudienceKitError.storage(String(describing: error))
         }
         resolvedAudienceID = nil
         sessionContinuation.yield(.signedIn)
-        return result
     }
 
     /// Forgets the session on this device. (The Facebook session belongs to the app; log out of it too.)
     public func signOut() {
-        try? tokenStore.deleteToken()
+        try? credentialStore.delete()
         resolvedAudienceID = nil
         sessionContinuation.yield(.signedOut)
     }
@@ -209,12 +221,12 @@ public actor AudienceSession {
 
     // MARK: - Audience
 
-    /// The audience this client queries: the configured ID, the session's `audience_id` claim, or the
+    /// The audience this client queries: the configured ID, the credential's `audienceId`, or the
     /// audience that owns the configured host.
     public func audienceID() async throws -> String {
         if let id = configuration.audienceID ?? resolvedAudienceID { return id }
 
-        if let token = try? tokenStore.loadToken(), let id = Self.claims(of: token)?.audienceID {
+        if let id = (try? credentialStore.load())?.audienceId {
             resolvedAudienceID = id
             return id
         }
@@ -263,8 +275,8 @@ public actor AudienceSession {
     public func data(for request: APIRequest) async throws -> Data {
         var token: String?
         if request.authenticated {
-            guard let stored = try? tokenStore.loadToken() else { throw AudienceKitError.notSignedIn }
-            token = stored
+            guard let stored = try? credentialStore.load() else { throw AudienceKitError.notSignedIn }
+            token = stored.token
         }
 
         let (data, response) = try await perform(request, token: token)
@@ -294,8 +306,8 @@ public actor AudienceSession {
     /// session already ended, or the person has signed in again since) it does nothing and returns false.
     @discardableResult
     public func sessionRejected(token: String?) -> Bool {
-        guard let token, let stored = try? tokenStore.loadToken(), stored == token else { return false }
-        try? tokenStore.deleteToken()
+        guard let token, let stored = try? credentialStore.load(), stored.token == token else { return false }
+        try? credentialStore.delete()
         resolvedAudienceID = nil
         sessionContinuation.yield(.sessionEnded)
         return true
@@ -348,8 +360,8 @@ public actor AudienceSession {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        if request.authenticated, let token = token ?? (try? tokenStore.loadToken()) {
-            urlRequest.setValue("JWT \(token)", forHTTPHeaderField: "Authorization")
+        if request.authenticated, let token = token ?? (try? credentialStore.load())?.token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         return urlRequest
@@ -382,29 +394,9 @@ public actor AudienceSession {
             throw AudienceKitError.decoding(String(describing: error))
         }
     }
-
-    /// The claims the client reads from a session JWT. The signature isn't checked; the API does that.
-    static func claims(of token: String) -> SessionClaims? {
-        let segments = token.split(separator: ".")
-        guard segments.count >= 2 else { return nil }
-
-        var base64 = segments[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-
-        guard let data = Data(base64Encoded: base64) else { return nil }
-        return try? JSONDecoder().decode(SessionClaims.self, from: data)
-    }
 }
 
 // MARK: - Wire types
-
-struct SessionClaims: Decodable {
-    var audienceID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case audienceID = "audience_id"
-    }
-}
 
 struct SignInRequest: Encodable {
     var facebookToken: String?

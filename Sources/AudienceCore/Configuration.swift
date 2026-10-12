@@ -56,8 +56,8 @@ public struct AudienceKitConfiguration: Sendable, Hashable {
     /// only accepts tokens from the AudienceKit platform Facebook app.
     public var host: String?
 
-    /// The audience's ID (a UUID). When `nil` the client works it out from the session token's
-    /// `audience_id` claim, or from ``AudienceSession/branding()`` for ``host``.
+    /// The audience's ID (a UUID). When `nil` the client works it out from the stored ``Credential``'s
+    /// `audienceId`, or from ``AudienceSession/branding()`` for ``host``.
     public var audienceID: String?
 
     /// The Facebook app the build signs people in with. The API only accepts the audience's own

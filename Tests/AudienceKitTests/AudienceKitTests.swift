@@ -11,17 +11,53 @@ import FoundationNetworking
 private let audienceID = "00000000-0000-4000-8000-000000000001"
 private let device = DeviceDescription(identifier: "device-1", model: "iPhone17,1", version: "2.0", build: "42")
 
+/// The API the request went to: its scheme and host, which is what a credential's endpoint names.
+private func apiBase(of request: RecordedRequest) -> URL {
+    URL(string: "\(request.url.scheme ?? "https")://\(request.url.host ?? "")")!
+}
+
+/// The URL of an audience's GraphQL endpoint on an API, as a credential names it.
+private func endpointURL(on baseURL: URL, audienceId: String?, endpoint: GraphQLEndpoint = .consumer) -> URL {
+    let path = audienceId.map { endpoint.path(audienceID: $0) } ?? "/v1/tenants/graphql"
+    return URL(string: path, relativeTo: baseURL)!.absoluteURL
+}
+
+/// A credential as `POST /v1/token` would issue it for the API at `baseURL`, for the audience's consumer endpoint.
+private func makeCredential(
+    baseURL: URL,
+    token: String = "session-token",
+    audienceId: String? = audienceID,
+    endpoint: GraphQLEndpoint = .consumer,
+    role: String = "member"
+) -> Credential {
+    Credential(token: token, userId: "u-1", audienceId: audienceId, role: role,
+               endpoint: endpointURL(on: baseURL, audienceId: audienceId, endpoint: endpoint))
+}
+
+/// The JSON `POST /v1/token` answers `request` with, for a session on the same API.
+private func tokenJSON(_ request: RecordedRequest, token: String, userId: String = "u-1",
+                       audienceId: String? = audienceID) -> String
+{
+    let audience = audienceId.map { "\"\($0)\"" } ?? "null"
+    let endpoint = endpointURL(on: apiBase(of: request), audienceId: audienceId).absoluteString
+    return #"{"token":"\#(token)","userId":"\#(userId)","audienceId":\#(audience),"role":"member","#
+        + #""endpoint":"\#(endpoint)","venueDeviceId":null,"expiresAt":null}"#
+}
+
 private func makeClient(
     _ stub: Stub,
     host: String? = "hotmess.admin.audiencekit.com",
     audienceID: String? = audienceID,
     token: String? = "session-token",
+    credentialAudienceID: String? = audienceID,
     environment: AudienceKitEnvironment = .production
-) -> (AudienceKitClient, InMemoryTokenStore) {
-    let store = InMemoryTokenStore(token: token)
+) -> (AudienceKitClient, InMemoryCredentialStore) {
+    let store = InMemoryCredentialStore(credential: token.map {
+        makeCredential(baseURL: stub.baseURL, token: $0, audienceId: credentialAudienceID)
+    })
     let configuration = AudienceKitConfiguration(baseURL: stub.baseURL, host: host, audienceID: audienceID,
                                                  facebookAppID: "100000000000001", environment: environment)
-    return (AudienceKitClient(configuration: configuration, tokenStore: store, session: stub.session), store)
+    return (AudienceKitClient(configuration: configuration, credentialStore: store, session: stub.session), store)
 }
 
 @Test func versionIsSet() {
@@ -37,18 +73,21 @@ private func makeClient(
 }
 
 @Suite struct SignIn {
-    @Test func exchangesTheFacebookTokenAndStoresTheSession() async throws {
-        let stub = Stub { _ in
-            .json(status: 200, body: #"{"token":"jwt-1","access_token":"jwt-1","user":{"id":"u-1","name":"Rick"}}"#)
-        }
+    @Test func exchangesTheFacebookTokenAndStoresTheCredential() async throws {
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, store) = makeClient(stub, token: nil)
         var events = client.sessionEvents.makeAsyncIterator()
 
         let result = try await client.signIn(facebookAccessToken: "fb-token", device: device)
 
-        #expect(result.token == "jwt-1")
-        #expect(result.user == .init(id: "u-1", name: "Rick"))
-        #expect(try store.loadToken() == "jwt-1")
+        #expect(result.credential.token == "jwt-1")
+        #expect(result.userId == "u-1")
+        #expect(result.credential.audienceId == audienceID)
+        #expect(result.credential.role == "member")
+        #expect(result.credential.endpoint.path == "/v1/audience/\(audienceID)/graphql")
+        #expect(result.credential.apiVersion == AudienceKitSDK.apiVersion)
+        #expect(try store.load() == result.credential)
+        #expect(try await client.credential() == result.credential)
         #expect(await client.isSignedIn)
         #expect(await events.next() == .signedIn)
 
@@ -70,9 +109,7 @@ private func makeClient(
     }
 
     @Test func stagingBuildsSayTheyAreStaging() async throws {
-        let stub = Stub { _ in
-            .json(status: 200, body: #"{"token":"jwt-1","access_token":"jwt-1","user":{"id":"u-1","name":"Rick"}}"#)
-        }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, _) = makeClient(stub, token: nil, environment: .staging)
 
         _ = try await client.signIn(facebookAccessToken: "fb-token", device: device)
@@ -81,7 +118,7 @@ private func makeClient(
     }
 
     @Test func leavesOutTheHostWhenNoneIsConfigured() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-1","user":{"id":"u-1","name":null}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-1")) }
         let (client, _) = makeClient(stub, host: nil, token: nil)
 
         try await client.signIn(facebookAccessToken: "fb-token", device: device)
@@ -91,7 +128,7 @@ private func makeClient(
     }
 
     @Test func exchangesAnOAuthCode() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-2","user":{"id":"u-1","name":"Rick"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-2")) }
         let (client, store) = makeClient(stub, token: nil)
 
         try await client.signIn(facebookCode: "code-1", redirectURI: "fb123://authorize/", device: device)
@@ -101,18 +138,18 @@ private func makeClient(
         #expect(body["redirect_uri"] as? String == "fb123://authorize/")
         #expect(body["facebook_token"] == nil)
         #expect(body["host"] as? String == "hotmess.admin.audiencekit.com")
-        #expect(try store.loadToken() == "jwt-2")
+        #expect(try store.load()?.token == "jwt-2")
     }
 
     @Test func signsInWithApple() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-3","user":{"id":"u-2","name":"Ada Byron"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-3", userId: "u-2")) }
         let (client, store) = makeClient(stub, token: nil)
 
         let result = try await client.signIn(appleIdentityToken: "apple-jwt", firstName: "Ada", lastName: "Byron",
                                              device: device)
 
-        #expect(result.user == .init(id: "u-2", name: "Ada Byron"))
-        #expect(try store.loadToken() == "jwt-3")
+        #expect(result.userId == "u-2")
+        #expect(try store.load()?.token == "jwt-3")
         let request = try #require(stub.requests.first)
         #expect(request.path == "/v1/token/apple")
         #expect(request.header("Authorization") == nil)
@@ -124,18 +161,19 @@ private func makeClient(
     }
 
     @Test func connectsFacebookToTheSignedInAccount() async throws {
-        let stub = Stub { _ in .json(status: 200, body: #"{"token":"jwt-4","user":{"id":"u-2","name":"Ada Byron"}}"#) }
+        let stub = Stub { request in .json(status: 200, body: tokenJSON(request, token: "jwt-4", userId: "u-2")) }
         let (client, store) = makeClient(stub, token: "jwt-3")
 
         try await client.connectFacebook(code: "code-1", redirectURI: "fb123://authorize/", device: device)
 
         let request = try #require(stub.requests.first)
         #expect(request.path == "/v1/token")
-        #expect(request.header("Authorization") == "JWT jwt-3")
+        #expect(request.header("Authorization") == "Bearer jwt-3")
         let body = try request.jsonBody()
         #expect(body["connect"] as? Bool == true)
         #expect(body["code"] as? String == "code-1")
-        #expect(try store.loadToken() == "jwt-4")
+        #expect(try store.load()?.token == "jwt-4")
+        #expect(try store.load()?.userId == "u-2")
     }
 
     @Test func aRejectedFacebookTokenIsNotASessionEnding() async throws {
@@ -145,7 +183,7 @@ private func makeClient(
         await #expect(throws: AudienceKitError.signInRejected) {
             try await client.signIn(facebookAccessToken: "bad", device: device)
         }
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
     }
 
     @Test func surfacesTheFaultMessage() async throws {
@@ -164,7 +202,7 @@ private func makeClient(
 
         await client.signOut()
 
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
         #expect(await events.next() == .signedOut)
     }
 }
@@ -196,7 +234,7 @@ private func makeClient(
         let request = try #require(stub.requests.first)
         #expect(request.method == "POST")
         #expect(request.path == "/v1/audience/\(audienceID)/graphql")
-        #expect(request.header("Authorization") == "JWT session-token")
+        #expect(request.header("Authorization") == "Bearer session-token")
 
         let body = try request.jsonBody()
         #expect(body["operationName"] as? String == "Venues")
@@ -406,7 +444,7 @@ private func makeClient(
 
         await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
 
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
         #expect(await client.isSignedIn == false)
         #expect(await events.next() == .sessionEnded)
         #expect(AudienceKitError.unauthorized.code == AudienceKitError.Code.unauthenticated)
@@ -431,19 +469,20 @@ private func makeClient(
     }
 
     @Test func aRefusalOfAnOlderTokenKeepsANewerSession() async throws {
-        let store = InMemoryTokenStore(token: "session-token")
-        let stub = Stub { _ in
+        let store = InMemoryCredentialStore()
+        let stub = Stub { request in
             // The person signed in again while the old token's call was in flight.
-            _ = try? store.saveToken("newer-token")
+            _ = try? store.save(makeCredential(baseURL: apiBase(of: request), token: "newer-token"))
             return .json(status: 401, body: "{}")
         }
+        try store.save(makeCredential(baseURL: stub.baseURL, token: "session-token"))
         let configuration = AudienceKitConfiguration(baseURL: stub.baseURL, audienceID: audienceID)
-        let client = AudienceKitClient(configuration: configuration, tokenStore: store, session: stub.session)
+        let client = AudienceKitClient(configuration: configuration, credentialStore: store, session: stub.session)
 
         await #expect(throws: AudienceKitError.unauthorized) { try await client.venues() }
 
-        #expect(try store.loadToken() == "newer-token")
-        #expect(stub.requests.first?.header("Authorization") == "JWT session-token")
+        #expect(try store.load()?.token == "newer-token")
+        #expect(stub.requests.first?.header("Authorization") == "Bearer session-token")
     }
 
     @Test func aSocketTheServerRefusedEndsTheSession() async throws {
@@ -452,10 +491,10 @@ private func makeClient(
         var events = client.sessionEvents.makeAsyncIterator()
 
         #expect(await client.sessionRejected(token: "someone-elses-token") == false)
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
 
         #expect(await client.sessionRejected(token: "session-token"))
-        #expect(try store.loadToken() == nil)
+        #expect(try store.load() == nil)
         #expect(await events.next() == .sessionEnded)
     }
 
@@ -464,7 +503,7 @@ private func makeClient(
         let (client, store) = makeClient(stub)
 
         await #expect(throws: AudienceKitError.forbidden) { try await client.venues() }
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
     }
 
     @Test func anOutdatedSDKIsToldToUpdate() async throws {
@@ -476,7 +515,7 @@ private func makeClient(
         await #expect(throws: AudienceKitError.updateRequired(minimumSDKVersion: "0.3.0", message: "This version of the app is out of date.")) {
             try await client.venues()
         }
-        #expect(try store.loadToken() == "session-token")
+        #expect(try store.load()?.token == "session-token")
         #expect(stub.requests.last?.header("X-AudienceKit-Client") == "AudienceKit-Swift/\(AudienceKitSDK.version)")
     }
 
@@ -590,14 +629,14 @@ private func makeClient(
 }
 
 @Suite struct AudienceResolution {
-    @Test func usesTheSessionsAudienceClaim() async throws {
+    @Test func usesTheCredentialsAudience() async throws {
         let stub = Stub { _ in .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#) }
-        let token = makeJWT(["id": "u-1", "audience_id": "from-token"])
-        let (client, _) = makeClient(stub, audienceID: nil, token: token)
+        let (client, _) = makeClient(stub, audienceID: nil, credentialAudienceID: "from-credential")
 
         _ = try await client.venues()
 
-        #expect(stub.requests.map(\.path) == ["/v1/audience/from-token/graphql"])
+        #expect(stub.requests.map(\.path) == ["/v1/audience/from-credential/graphql"])
+        #expect(try await client.audienceID() == "from-credential")
     }
 
     @Test func looksUpTheHostsAudienceForAPlatformSession() async throws {
@@ -610,7 +649,8 @@ private func makeClient(
             }
             return .json(status: 200, body: #"{"data":{"venues":{"list":{"nodes":[]}}}}"#)
         }
-        let (client, _) = makeClient(stub, audienceID: nil, token: makeJWT(["id": "u-1"]))
+        // A platform-console session belongs to no audience.
+        let (client, _) = makeClient(stub, audienceID: nil, credentialAudienceID: nil)
 
         _ = try await client.venues()
         _ = try await client.venues()
@@ -622,9 +662,11 @@ private func makeClient(
 
     @Test func needsAnAudienceOrAHost() async throws {
         let stub = Stub { _ in .json(status: 200, body: "{}") }
-        let (client, _) = makeClient(stub, host: nil, audienceID: nil, token: "not-a-jwt")
+        let (client, _) = makeClient(stub, host: nil, audienceID: nil, credentialAudienceID: nil)
 
-        await #expect(throws: AudienceKitError.self) { try await client.venues() }
+        await #expect(throws: AudienceKitError.missingConfiguration("set an audienceID or a host")) {
+            try await client.venues()
+        }
         #expect(stub.requests.isEmpty)
     }
 }
@@ -867,18 +909,67 @@ private func makeClient(
         #expect(Coordinate(wkt: "") == nil)
     }
 
-    @Test func readsTheAudienceClaim() {
-        #expect(AudienceKitClient.claims(of: makeJWT(["audience_id": "a-1"]))?.audienceID == "a-1")
-        #expect(AudienceKitClient.claims(of: makeJWT(["id": "u"]))?.audienceID == nil)
-        #expect(AudienceKitClient.claims(of: "garbage") == nil)
+    @Test func inMemoryStoreRoundTrips() throws {
+        let credential = Credential(token: "t", userId: "u-1", audienceId: "a-1", role: "member",
+                                    endpoint: URL(string: "https://api.example/v1/audience/a-1/graphql")!)
+        let store = InMemoryCredentialStore()
+        #expect(try store.load() == nil)
+        try store.save(credential)
+        #expect(try store.load() == credential)
+        try store.delete()
+        #expect(try store.load() == nil)
+    }
+}
+
+@Suite struct Credentials {
+    @Test func decodesTheTokenJSON() throws {
+        let json = #"""
+        {"token":"jwt","userId":"u-1","audienceId":"a-1","role":"venue_device",
+         "endpoint":"https://api.audiencekit.com/v1/audience/a-1/staffql","venueDeviceId":"vd-1",
+         "expiresAt":"2026-10-12T03:00:00.250Z"}
+        """#
+        let credential = try JSONDecoder().decode(Credential.self, from: Data(json.utf8))
+
+        #expect(credential.token == "jwt")
+        #expect(credential.userId == "u-1")
+        #expect(credential.audienceId == "a-1")
+        #expect(credential.role == "venue_device")
+        #expect(credential.venueDeviceId == "vd-1")
+        #expect(credential.isStaff)
+        #expect(credential.origin == URL(string: "https://api.audiencekit.com"))
+        #expect(credential.expiresAt == Date(timeIntervalSince1970: 1_791_774_000.25))
+        #expect(credential.isExpired(at: Date(timeIntervalSince1970: 1_791_774_001)))
+        #expect(!credential.isExpired(at: Date(timeIntervalSince1970: 1_791_774_000)))
+        // Not in the API's JSON: the SDK stamps the version it spoke when the credential was issued.
+        #expect(credential.apiVersion == AudienceKitSDK.apiVersion)
     }
 
-    @Test func inMemoryStoreRoundTrips() throws {
-        let store = InMemoryTokenStore()
-        #expect(try store.loadToken() == nil)
-        try store.saveToken("t")
-        #expect(try store.loadToken() == "t")
-        try store.deleteToken()
-        #expect(try store.loadToken() == nil)
+    @Test func toleratesAPlatformSession() throws {
+        let json = #"""
+        {"token":"jwt","userId":"u-1","audienceId":null,"role":"admin",
+         "endpoint":"http://localhost:3000/v1/tenants/graphql","venueDeviceId":null,"expiresAt":null}
+        """#
+        let credential = try JSONDecoder().decode(Credential.self, from: Data(json.utf8))
+        #expect(credential.audienceId == nil)
+        #expect(credential.expiresAt == nil)
+        #expect(!credential.isExpired())
+        #expect(!credential.isStaff)
+        #expect(credential.origin == URL(string: "http://localhost:3000"))
+    }
+
+    @Test func roundTripsThroughTheStoreFormat() throws {
+        let credential = Credential(token: "t", userId: "u-1", audienceId: "a-1", role: "member",
+                                    endpoint: URL(string: "https://api.example/v1/audience/a-1/graphql")!,
+                                    expiresAt: Date(timeIntervalSince1970: 1_791_774_000), apiVersion: "2026-10-11")
+
+        let data = try CredentialEnvelope.encode(credential)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?["v"] as? Int == CredentialEnvelope.formatVersion)
+        #expect((object?["credential"] as? [String: Any])?["expiresAt"] as? String == "2026-10-12T03:00:00Z")
+        #expect(CredentialEnvelope.decode(data) == credential)
+
+        // A raw token from the first SDKs' keychain item, or another format version, reads as no credential.
+        #expect(CredentialEnvelope.decode(Data("eyJhbGciOiJIUzI1NiJ9.e30.sig".utf8)) == nil)
+        #expect(CredentialEnvelope.decode(Data(#"{"v":0,"credential":{}}"#.utf8)) == nil)
     }
 }
