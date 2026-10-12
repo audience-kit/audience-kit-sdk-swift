@@ -44,7 +44,7 @@ extension AudienceSession {
     @discardableResult
     public func setRSVP(_ state: RSVPState, forEvent eventID: String) async throws -> RSVPState {
         try await graphQL(Queries.rsvpEvent, variables: ["eventId": .string(eventID), "state": .string(state.rawValue)],
-                          operationName: "RSVPEvent", as: RSVPEventResponse.self).rsvpEvent.event.viewerRsvp
+                          operationName: "RSVPEvent", as: RSVPEventResponse.self).rsvpEvent.event.rsvp.mine
     }
 
     /// The tribes people can identify with here, and the signed-in user's own (empty when signed out).

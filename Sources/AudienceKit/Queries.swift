@@ -85,7 +85,7 @@ public enum Queries {
 
     public static let rsvpEvent = """
     mutation RSVPEvent($eventId: ID!, $state: RSVPState!) {
-      rsvpEvent(input: { eventId: $eventId, state: $state }) { event { id viewerRsvp } }
+      rsvpEvent(input: { eventId: $eventId, state: $state }) { event { id rsvp { mine } } }
     }
     """
 
@@ -254,8 +254,10 @@ struct TribesResponse: Decodable, Sendable {
 struct TribesPayload: Decodable, Sendable { var tribes: [TribeIdentification] }
 struct IdentifyWithTribeResponse: Decodable, Sendable { var identifyWithTribe: TribesPayload }
 struct LeaveTribeResponse: Decodable, Sendable { var leaveTribe: TribesPayload }
+/// `rsvpEvent { event { rsvp { mine } } }`: the signed-in user's answer, from the event's rsvp mixin.
 struct RSVPEventResponse: Decodable, Sendable {
-    struct Event: Decodable, Sendable { var viewerRsvp: RSVPState }
+    struct RSVP: Decodable, Sendable { var mine: RSVPState }
+    struct Event: Decodable, Sendable { var rsvp: RSVP }
     struct Payload: Decodable, Sendable { var event: Event }
     var rsvpEvent: Payload
 }

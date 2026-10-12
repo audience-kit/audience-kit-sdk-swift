@@ -518,7 +518,7 @@ private func makeClient(
 
     @Test func setsAnRSVP() async throws {
         let stub = Stub { _ in
-            .json(status: 200, body: #"{"data":{"rsvpEvent":{"event":{"id":"e-1","viewerRsvp":"ATTENDING"}}}}"#)
+            .json(status: 200, body: #"{"data":{"rsvpEvent":{"event":{"id":"e-1","rsvp":{"mine":"ATTENDING"}}}}}"#)
         }
         let (client, _) = makeClient(stub)
 
@@ -529,6 +529,8 @@ private func makeClient(
         let variables = try #require(body["variables"] as? [String: Any])
         #expect(variables["eventId"] as? String == "e-1")
         #expect(variables["state"] as? String == "ATTENDING")
+        #expect((body["query"] as? String)?.contains("rsvp { mine }") == true)
+        #expect((body["query"] as? String)?.contains("viewerRsvp") == false)
     }
 
     @Test func registersTheDevice() async throws {
