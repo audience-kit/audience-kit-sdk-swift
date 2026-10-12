@@ -69,6 +69,14 @@ Pairs with API version `2026-10-11`, which the SDK sends as `X-AudienceKit-API-V
   `CoverPass.code(admissionID:secret:prefix:at:)` takes the prefix (`CoverPass.defaultPrefix`), and
   `AudienceSession.coverPassCode(for:at:)` uses the configured one.
 - `registerDevice(token:appId:sandbox:)` replaces `registerDevice(notificationToken:)`.
+- `AudienceCable`, new in this release (one Action Cable socket for every subscription), reads the session's
+  `Credential` rather than a token: `AudienceCable(configuration:
+  endpoint:url:session:silenceLimit:credential:unauthorized:)`, or `AudienceSession.makeCable(endpoint:url:)`, which
+  wires the credential store and `sessionRejected(token:)`. The socket opens on the origin of the credential's
+  `endpoint` (the configured `baseURL` before sign-in; `url` overrides it) and its handshake carries
+  `Authorization: Bearer <token>`, `X-AudienceKit-API-Version`, `X-AudienceKit-Client` and, off production,
+  `X-AudienceKit-Environment`, from the same `URLRequest.setAudienceKitHeaders(environment:token:)` the HTTP
+  client uses (public, for a Server-Sent Events stream of your own).
 - `Queries.rsvpEvent` selects `rsvp { mine }` instead of the deprecated `viewerRsvp` (4.1).
 - REST error bodies `{ "error": "<code>", "message": "…" }` become coded errors; a 400 `unsupported_api_version`
   is `UNSUPPORTED_API_VERSION`.
@@ -93,7 +101,8 @@ Money as `Money { cents, currency }` is not in this release: cents fields wait f
 | `audienceKit.sessionEvents` iterated once | iterate anywhere; each access is a subscription |
 | `Presence` fallback `.offline` | `.unknown(value)`; use `isReachable` |
 | `CoverPass.code(admissionID:secret:)` | unchanged (prefix `HMC1`), or `audienceKit.coverPassCode(for:)` |
-| `Authorization: JWT` on your own cable connection | `Authorization: Bearer`, and send `X-AudienceKit-API-Version: 2026-10-11` |
+| `AudienceCable(url:token:openSocket:)` rewriting the handshake to `Bearer` | `audienceKit.makeCable()` (or `AudienceCable(configuration:credential:)`); drop the handshake wrapper |
+| `Authorization: JWT` on your own SSE stream | `request.setAudienceKitHeaders(token: sessionToken)` |
 
 ## 0.17.0
 

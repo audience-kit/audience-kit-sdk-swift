@@ -72,7 +72,14 @@ private func json(_ object: [String: Any]) -> String {
     String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
 
-private let cableURL = URL(string: "wss://api.test/connection")!
+private let configuration = AudienceKitConfiguration(baseURL: URL(string: "https://api.test")!)
+
+/// A session on `https://api.test`, for the audience's consumer endpoint, or its staff one on `https://staff.test`.
+private func credential(_ token: String, staff: Bool = false) -> Credential {
+    let endpoint = staff ? "https://staff.test/v1/audience/aud/staffql" : "https://api.test/v1/audience/aud/graphql"
+    return Credential(token: token, userId: "u-1", audienceId: "aud", role: staff ? "admin" : "member",
+                      endpoint: URL(string: endpoint)!)
+}
 
 @Suite struct AudienceCableProtocol {
     @Test func theAddressAndIdentifierAreStable() {
@@ -89,6 +96,19 @@ private let cableURL = URL(string: "wss://api.test/connection")!
             AudienceCable.graphQLIdentifier(audienceID: "aud", channelID: "c1")
                 == #"{"audience_id":"aud","channel":"GraphQLChannel","channelId":"c1"}"#
         })
+    }
+
+    @Test func aDevelopmentAddressAndEnvironmentAreHonoured() async throws {
+        let sockets = Sockets()
+        let staging = AudienceKitConfiguration(baseURL: URL(string: "https://api.test")!, environment: .staging)
+        let cable = AudienceCable(configuration: staging, url: URL(string: "ws://localhost:3000/connection")!,
+                                  credential: { credential("session-jwt") }, openSocket: { sockets.open($0) })
+        let stream = await cable.subscribe(query: "subscription A { a }", audienceID: "aud")
+        let socket = try #require(sockets.all.first)
+        #expect(socket.request.url?.absoluteString == "ws://localhost:3000/connection")
+        #expect(socket.request.value(forHTTPHeaderField: "Authorization") == "Bearer session-jwt")
+        #expect(socket.request.value(forHTTPHeaderField: AudienceKitEnvironment.headerName) == "staging")
+        _ = stream
     }
 
     @Test func theExecuteCommandCarriesTheOperation() throws {
@@ -110,13 +130,19 @@ private let cableURL = URL(string: "wss://api.test/connection")!
 
     @Test func runsAnOperationAndRunsItAgainAfterReconnecting() async throws {
         let sockets = Sockets()
-        let cable = AudienceCable(url: cableURL, endpoint: .staff, token: { "session-jwt" },
+        let cable = AudienceCable(configuration: configuration, endpoint: .staff,
+                                  credential: { credential("session-jwt", staff: true) },
                                   openSocket: { sockets.open($0) })
         var events = await cable.subscribe(query: "subscription StaffDoor($id: ID!) { door(venueId: $id) { __typename } }",
                                            variables: ["id": .string("v1")], operationName: "StaffDoor",
                                            audienceID: "aud").makeAsyncIterator()
         let first = try #require(sockets.all.first)
-        #expect(first.request.value(forHTTPHeaderField: "Authorization") == "JWT session-jwt")
+        // The socket opens on the API the credential names, dressed like every other call.
+        #expect(first.request.url?.absoluteString == "wss://staff.test/connection")
+        #expect(first.request.value(forHTTPHeaderField: "Authorization") == "Bearer session-jwt")
+        #expect(first.request.value(forHTTPHeaderField: AudienceKitSDK.apiVersionHeaderName) == AudienceKitSDK.apiVersion)
+        #expect(first.request.value(forHTTPHeaderField: "X-AudienceKit-Client") == "AudienceKit-Swift/\(AudienceKitSDK.version)")
+        #expect(first.request.value(forHTTPHeaderField: AudienceKitEnvironment.headerName) == nil)
 
         // Subscribed to GraphQLChannel once welcomed, with the audience and a channel id of its own.
         first.push(#"{"type":"welcome"}"#)
@@ -167,7 +193,8 @@ private let cableURL = URL(string: "wss://api.test/connection")!
 
     @Test func operationsShareOneSocketAndEachHearsOnlyItsOwn() async throws {
         let sockets = Sockets()
-        let cable = AudienceCable(url: cableURL, token: { "session-jwt" }, openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, credential: { credential("session-jwt") },
+                                  openSocket: { sockets.open($0) })
         var chat = await cable.subscribe(query: "subscription { venueChat(venueId: \"v1\") { __typename } }",
                                          audienceID: "aud").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
@@ -206,8 +233,8 @@ private let cableURL = URL(string: "wss://api.test/connection")!
 
     @Test func aQuietSocketReconnectsOnceAndResubscribesEveryOperation() async throws {
         let sockets = Sockets()
-        let cable = AudienceCable(url: cableURL, silenceLimit: .milliseconds(200), token: { "session-jwt" },
-                                  openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, silenceLimit: .milliseconds(200),
+                                  credential: { credential("session-jwt") }, openSocket: { sockets.open($0) })
         var chat = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
         var notifications = await cable.subscribe(query: "subscription B { b }", audienceID: "aud").makeAsyncIterator()
         let first = try #require(sockets.all.first)
@@ -231,7 +258,8 @@ private let cableURL = URL(string: "wss://api.test/connection")!
 
     @Test func theSocketClosesAfterTheLastOperationEnds() async throws {
         let sockets = Sockets()
-        let cable = AudienceCable(url: cableURL, token: { "session-jwt" }, openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, credential: { credential("session-jwt") },
+                                  openSocket: { sockets.open($0) })
         let first = Task {
             for await _ in await cable.subscribe(query: "subscription A { a }", audienceID: "aud") {}
         }
@@ -256,10 +284,13 @@ private let cableURL = URL(string: "wss://api.test/connection")!
 
     @Test func aRejectedChannelEndsOnlyItsOperation() async throws {
         let sockets = Sockets()
-        let cable = AudienceCable(url: cableURL, token: { nil }, openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, credential: { nil }, openSocket: { sockets.open($0) })
         var refused = await cable.subscribe(query: "subscription A { a }", audienceID: "other").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
+        // No credential: the configured API, unsigned.
+        #expect(socket.request.url?.absoluteString == "wss://api.test/connection")
         #expect(socket.request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(socket.request.value(forHTTPHeaderField: AudienceKitSDK.apiVersionHeaderName) == AudienceKitSDK.apiVersion)
         socket.push(#"{"type":"welcome"}"#)
         try await eventually { socket.sent.count == 1 }
         let identifier = try #require(socket.sent[0]["identifier"] as? String)
@@ -271,8 +302,8 @@ private let cableURL = URL(string: "wss://api.test/connection")!
     @Test func aRefusedConnectionEndsEveryOperationAndHandsBackTheToken() async throws {
         let sockets = Sockets()
         let refused = Refusals()
-        let cable = AudienceCable(url: cableURL, token: { "revoked-jwt" }, unauthorized: { refused.record($0) },
-                                  openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, credential: { credential("revoked-jwt") },
+                                  unauthorized: { refused.record($0) }, openSocket: { sockets.open($0) })
         var chat = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
         var notifications = await cable.subscribe(query: "subscription B { b }", audienceID: "aud").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
@@ -291,8 +322,8 @@ private let cableURL = URL(string: "wss://api.test/connection")!
     @Test func aServerRestartIsNotASessionEnding() async throws {
         let sockets = Sockets()
         let refused = Refusals()
-        let cable = AudienceCable(url: cableURL, token: { "session-jwt" }, unauthorized: { refused.record($0) },
-                                  openSocket: { sockets.open($0) })
+        let cable = AudienceCable(configuration: configuration, credential: { credential("session-jwt") },
+                                  unauthorized: { refused.record($0) }, openSocket: { sockets.open($0) })
         var events = await cable.subscribe(query: "subscription A { a }", audienceID: "aud").makeAsyncIterator()
         let socket = try #require(sockets.all.first)
         socket.push(#"{"type":"disconnect","reason":"server_restart","reconnect":false}"#)

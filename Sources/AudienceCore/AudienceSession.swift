@@ -68,7 +68,7 @@ public actor AudienceSession {
     public nonisolated let configuration: AudienceKitConfiguration
 
     private nonisolated let events = SessionEventBroadcaster()
-    private let credentialStore: any CredentialStore
+    private nonisolated let credentialStore: any CredentialStore
     private let session: URLSession
     private var resolvedAudienceID: String?
 
@@ -307,6 +307,25 @@ public actor AudienceSession {
         return result
     }
 
+    // MARK: - Realtime
+
+    /// A cable for this session's GraphQL subscriptions (``AudienceCable``): keep one for the app. Its socket opens
+    /// on the API instance the stored credential names (the configured base URL before sign-in, or `url` when
+    /// given), signed with the credential's token and the same headers as every call, and read again whenever it
+    /// reconnects, so a new sign-in is picked up. A connection the server refuses as `unauthorized` ends the
+    /// session the way an HTTP 401 does (``sessionRejected(token:)``). `endpoint` is the view its operations run in.
+    public nonisolated func makeCable(endpoint: GraphQLEndpoint = .consumer, url: URL? = nil,
+                                      session: URLSession = .shared, silenceLimit: Duration = .seconds(12))
+        -> AudienceCable
+    {
+        let store = credentialStore
+        return AudienceCable(configuration: configuration, endpoint: endpoint, url: url, session: session,
+                             silenceLimit: silenceLimit, credential: { try? store.load() },
+                             unauthorized: { [weak self] token in
+                                 Task { await self?.sessionRejected(token: token) }
+                             })
+    }
+
     // MARK: - REST
 
     /// Sends a request to a REST endpoint and returns the body of a successful response.
@@ -394,20 +413,12 @@ public actor AudienceSession {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        urlRequest.setValue("AudienceKit-Swift/\(AudienceKitSDK.version)", forHTTPHeaderField: "X-AudienceKit-Client")
-        urlRequest.setValue(AudienceKitSDK.apiVersion, forHTTPHeaderField: AudienceKitSDK.apiVersionHeaderName)
-        if configuration.environment != .production {
-            urlRequest.setValue(configuration.environment.rawValue,
-                                forHTTPHeaderField: AudienceKitEnvironment.headerName)
-        }
+        let bearer = request.authenticated ? token ?? (try? credentialStore.load())?.token : nil
+        urlRequest.setAudienceKitHeaders(environment: configuration.environment, token: bearer)
 
         if let body = request.body {
             urlRequest.httpBody = body
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-
-        if request.authenticated, let token = token ?? (try? credentialStore.load())?.token {
-            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         return urlRequest
@@ -600,6 +611,24 @@ struct GraphQLRequest: Encodable {
 struct GraphQLResponse<Payload: Decodable>: Decodable {
     var data: Payload?
     var errors: [GraphQLError]?
+}
+
+extension URLRequest {
+    /// Dresses a request the way every call to the API is dressed, the cable's handshake included: which SDK is
+    /// calling (`X-AudienceKit-Client`), the contract version it speaks (`X-AudienceKit-API-Version`), the build's
+    /// environment when it isn't production (`X-AudienceKit-Environment`), and the session as
+    /// `Authorization: Bearer <token>` when there is one. For a connection the SDK doesn't make itself (a
+    /// Server-Sent Events stream, say), pass ``AudienceSession/sessionToken()``.
+    public mutating func setAudienceKitHeaders(environment: AudienceKitEnvironment = .production, token: String?) {
+        setValue("AudienceKit-Swift/\(AudienceKitSDK.version)", forHTTPHeaderField: "X-AudienceKit-Client")
+        setValue(AudienceKitSDK.apiVersion, forHTTPHeaderField: AudienceKitSDK.apiVersionHeaderName)
+        if environment != .production {
+            setValue(environment.rawValue, forHTTPHeaderField: AudienceKitEnvironment.headerName)
+        }
+        if let token {
+            setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
 }
 
 extension URLSession {

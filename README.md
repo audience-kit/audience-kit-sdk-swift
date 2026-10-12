@@ -117,8 +117,10 @@ same time, and a refusal of an older token never ends a newer sign-in. A 403
 (`FORBIDDEN`, e.g. no staff role) or a network failure doesn't end the session.
 
 Connections the SDK doesn't make itself (a Server-Sent Events stream) carry
-`client.sessionToken()`. When the server refuses that token there (the stream
-answers 401), hand the token back and the session ends the same way:
+`client.sessionToken()` and the same headers as every call
+(`request.setAudienceKitHeaders(environment:token:)`). When the server refuses
+that token there (the stream answers 401), hand the token back and the session
+ends the same way:
 
 ```swift
 await client.sessionRejected(token: token)
@@ -130,14 +132,16 @@ GraphQL subscriptions (chat rooms, notifications) ride one Action Cable
 websocket. Keep one `AudienceCable` for the app and subscribe every feature on
 it; the socket opens with the first subscription and closes after the last one
 ends, so subscriptions that live while the app is in the foreground keep it open
-exactly then.
+exactly then. The client makes one wired to its session: the socket opens on
+the API instance the stored credential names (`wss://<origin>/connection`;
+the configured base URL before sign-in), its handshake carries
+`Authorization: Bearer <token>` and the same `X-AudienceKit-*` headers as every
+call, and a connection the server closes as `unauthorized` ends the session
+like an HTTP 401. Pass `endpoint: .staff` for a staff tool's subscriptions,
+and `url:` to point a development build at a local cable.
 
 ```swift
-let cable = AudienceCable(
-    url: AudienceCable.url(for: configuration.baseURL),
-    token: { try? store.loadToken() },
-    unauthorized: { token in Task { await client.sessionRejected(token: token) } }
-)
+let cable = client.makeCable()
 
 for await event in await cable.subscribe(query: document, variables: ["id": "…"], audienceID: audienceID) {
     switch event {
