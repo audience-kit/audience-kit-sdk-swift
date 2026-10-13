@@ -43,7 +43,7 @@ enum Queries {
       people {
         list {
           nodes {
-            id name order global likeRequired profile { facebook { page { \(pageFields) } } }
+            id name avatarUrl bannerUrl order global likeRequired profile { facebook { page { \(pageFields) } } }
             venues { home { \(personVenueFields) } }
             locales { id name }
             events { involvements { edges { relationship role via { id name } node { \(personEventFields) } } } }

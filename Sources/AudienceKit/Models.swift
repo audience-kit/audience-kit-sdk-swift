@@ -246,6 +246,8 @@ public struct Venue: Codable, Sendable, Hashable, Identifiable {
 /// A person (performer, promoter, DJ...) the audience follows.
 public struct Person: Codable, Sendable, Hashable, Identifiable {
     public let id: String
+    public let avatarUrl: String?
+    public let bannerUrl: String?
     public let order: Int
     public let global: Bool
     public let likeRequired: Bool
@@ -271,9 +273,12 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     /// `name` is their own name (the API's `name`, nullable); ``name`` falls back to the Page's.
     public init(id: String, name: String? = nil, order: Int = 0, global: Bool = false, likeRequired: Bool = false,
                 page: Page? = nil, homeVenue: PersonVenue? = nil, locales: [AudienceLocale]? = nil,
-                events: [PersonEvent]? = nil, eventInvolvements: [PersonEventInvolvement]? = nil, tags: [Tag]? = nil)
+                events: [PersonEvent]? = nil, eventInvolvements: [PersonEventInvolvement]? = nil, tags: [Tag]? = nil,
+                avatarUrl: String? = nil, bannerUrl: String? = nil)
     {
         self.id = id
+        self.avatarUrl = avatarUrl
+        self.bannerUrl = bannerUrl
         self.personName = name
         self.order = order
         self.global = global
@@ -287,7 +292,7 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, order, global, likeRequired, profile, locales, tags, venues, events
+        case id, avatarUrl, bannerUrl, order, global, likeRequired, profile, locales, tags, venues, events
         case personName = "name"
     }
 
@@ -300,6 +305,8 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
+        bannerUrl = try container.decodeIfPresent(String.self, forKey: .bannerUrl)
         order = try container.decode(Int.self, forKey: .order)
         global = try container.decode(Bool.self, forKey: .global)
         likeRequired = try container.decode(Bool.self, forKey: .likeRequired)
@@ -319,6 +326,8 @@ public struct Person: Codable, Sendable, Hashable, Identifiable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(avatarUrl, forKey: .avatarUrl)
+        try container.encodeIfPresent(bannerUrl, forKey: .bannerUrl)
         try container.encode(order, forKey: .order)
         try container.encode(global, forKey: .global)
         try container.encode(likeRequired, forKey: .likeRequired)

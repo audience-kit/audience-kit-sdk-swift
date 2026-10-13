@@ -415,7 +415,7 @@ private func makeClient(
                 {"data":{"people":{"list":{"nodes":[{"id":"pe-1","order":1,"global":false,"likeRequired":true,
                   "profile":{"facebook":{"page":{"id":"p-2","name":"DJ Example","photoUrl":null,"bannerUrl":null}}},
                   "locales":[{"id":"l-2","name":"Portland"}]},
-                  {"id":"pe-2","name":"DJ Nobody","order":2,"global":false,"likeRequired":false,
+                  {"id":"pe-2","name":"DJ Nobody","avatarUrl":"/photos/person.jpg","bannerUrl":"/photos/banner.jpg","order":2,"global":false,"likeRequired":false,
                   "profile":{"facebook":{"page":null}},
                   "venues":{"home":{"id":"v-1","name":"Neighbours","photoUrl":null,"locale":{"id":"l-1","name":"Seattle"},
                     "friends":{"list":{"nodes":[{"id":"f-1","name":"Sam Okafor","facebookId":"123","presence":"ONLINE"}]}}}},
@@ -447,6 +447,11 @@ private func makeClient(
         // Talent added by name has no Facebook Page yet.
         #expect(people.map(\.name) == ["DJ Example", "DJ Nobody"])
         #expect(people.last?.page == nil)
+        #expect(people.last?.avatarUrl == "/photos/person.jpg")
+        #expect(people.last?.bannerUrl == "/photos/banner.jpg")
+        let roundTrip = try JSONDecoder().decode(AudienceKit.Person.self, from: JSONEncoder().encode(people.last!))
+        #expect(roundTrip.avatarUrl == people.last?.avatarUrl)
+        #expect(roundTrip.bannerUrl == people.last?.bannerUrl)
         #expect(people.first?.page?.id == "p-2")
         #expect(people.first?.likeRequired == true)
         // Featured locales, home venue and gigs place a person in a locale, with friends there now.
