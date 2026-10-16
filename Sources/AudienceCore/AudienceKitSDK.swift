@@ -7,7 +7,7 @@ import Foundation
 /// audience's data over GraphQL.
 public enum AudienceKitSDK {
     /// The SDK's semantic version.
-    public static let version = "0.19.0"
+    public static let version = "0.19.1"
 
     /// The API contract this SDK speaks, the date it was last broken: sent as `X-AudienceKit-API-Version` on every
     /// request and kept on each ``Credential``.
