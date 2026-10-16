@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.1 (2026-10-16)
+
+- `Person` carries `avatarUrl` and `bannerUrl`, and the people listing selects them, so a person's own profile photos
+  show without a Facebook Page. Additive; no contract change.
+
 ## 0.19.0 (2026-10-12)
 
 (0.18.0 was the AudienceCable release on main; this release carries the sweep and includes it.)
